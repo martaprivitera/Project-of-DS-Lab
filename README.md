@@ -18,5 +18,5 @@ Rmd with KNN, Prophet, and ARIMA models implemented using the rolling forecast m
 
 The original file: restaurants.csv
 
-The six datasets after preprocessing: R*.csv and the corresponding HTML files of the Rmd scripts.
+The six datasets after preprocessing: R*.csv
 
