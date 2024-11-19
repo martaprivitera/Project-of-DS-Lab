@@ -1,0 +1,493 @@
+---
+title: "Ristorante 2-Serie Storica LSTM2"
+author: "Eleonora Brambatti"
+date: "2023-12-27"
+output: html_document
+---
+
+Preparazione dati per modello LSTM2:
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+# Caricamento delle librerie
+library(xts)
+library(forecast)
+library(lubridate)
+library(tsfknn)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(recipes)
+library(tensorflow)
+library(reticulate)
+if (!require(keras)) install.packages("keras")
+library(keras)
+#use_condaenv("r-tensorflow", required = TRUE)
+```
+
+\
+
+```{r}
+#if (!require(remotes)) install.packages("remotes")
+#remotes::install_github("rstudio/tensorflow", force = TRUE)
+```
+
+\
+
+```{r}
+#py_install("tensorflow")
+```
+
+\
+
+\
+
+```{r}
+
+# Carico i dati dal file CSV
+R2 <- read.csv("R2.csv")
+
+R2$Date <- as.Date(R2$data, format = "%Y-%m-%d")
+
+plot(R2$Date, R2$S_R2, xlab = "Data", ylab = "Scontrini", main = "Grafico Scontrini vs. Data", type = "l")
+```
+
+\
+
+\
+
+```{r}
+plot(R2$S_R2, R2$LT_R2, xlab = "Scontrini", ylab = "Lordo Totale", main = "Grafico Lordo Totale vs. Scontrini")
+```
+
+\
+
+\
+
+```{r}
+plot(R2$Date, R2$LT_R2, xlab = "Data", ylab = "Lordo Totale", main = "Grafico Lordo Totale vs. Data", type = "l")
+```
+
+\
+ora considero solo le colonne lt e data e creo un altro dataset
+
+\
+
+```{r}
+R2_LT <- xts(
+  R2$LT_R2, # Selezioniamo la colonna LT_R1 come dati sull'asse delle y
+  R2$Date # Utilizziamo la colonna "Date" formattata come oggetti di data sull'asse delle x
+)
+
+```
+
+\
+
+\
+
+```{r}
+R2_1 <- R2[986:1637, ]
+```
+
+\
+
+ora iniziamo a dividere la serie storica in anni\
+
+```{r}
+# Filtra la serie storica per il 2018
+R2_2018 <- R2_LT["2018-01-01/2018-12-31"]
+
+# Filtra la serie storica per il 2019
+R2_2019 <- R2_LT["2019-01-01/2019-12-31"]
+
+# Filtra la serie storica per il 2021
+R2_2021 <- R2_LT["2021-01-01/2021-12-31"]
+
+# Filtra la serie storica per il 2022
+R2_2022 <- R2_LT["2022-01-01/2022-12-31"]
+
+# Filtra la serie storica per il 2022
+R2_2023 <- R2_LT["2023-01-01/2023-12-31"]
+```
+
+\
+
+\
+
+```{r}
+# Calcola la media mensile per il 2018
+monthly_mean_2018 <- apply.monthly(R2_2018, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2019 <- apply.monthly(R2_2019, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2021 <- apply.monthly(R2_2021, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2022 <- apply.monthly(R2_2022, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2023 <- apply.monthly(R2_2023, FUN = mean)
+```
+
+\
+
+costruiamo il dataset\
+
+```{r}
+
+# Estrai i mesi dai dati
+months_2018 <- as.numeric(format(index(monthly_mean_2018), "%m"))
+months_2019 <- as.numeric(format(index(monthly_mean_2019), "%m"))
+
+# Trova gli indici dei mesi comuni tra il 2018 e il 2019
+common_month_indices <- which(months_2018 %in% months_2019)
+
+# Crea un vettore con il mese di riferimento e la media corrispondente per i mesi comuni
+result_vector <- data.frame(
+  "Mese" = months_2018[common_month_indices],
+  "Media_2018" = as.vector(monthly_mean_2018[common_month_indices]),
+  "Media_2019" = as.vector(monthly_mean_2019[common_month_indices])
+)
+
+# Calcola la differenza percentuale tra le medie del 2018 e del 2019 per lo stesso mese
+result_vector$Differenza_Percentuale <- 
+  ((result_vector$Media_2018 - result_vector$Media_2019) / result_vector$Media_2018)
+
+# Calcola il valore massimo (in valore assoluto) delle differenze percentuali
+max_diff_percent <- max(abs(result_vector$Differenza_Percentuale))
+
+# Aggiungi colonne Tolleranza_Min e Tolleranza_Max
+result_vector$Tolleranza <- max_diff_percent
+
+print(result_vector)
+```
+
+\
+
+\
+
+```{r}
+#stabilisco la tolleranza sulla base di quello che ho scritto sopra
+tolleranza <- result_vector$Media_2019 * result_vector$Tolleranza 
+
+# Aggiungi i valori di tolleranza al dataset
+result_vector$Tolleranza_Min_2019 <- abs(result_vector$Media_2019 - tolleranza)
+result_vector$Tolleranza_Max_2019 <- result_vector$Media_2019 + tolleranza
+
+print(result_vector)
+```
+
+\
+
+\
+
+```{r}
+# Estrai i mesi del 2019 che non erano presenti nel 2018
+missing_months_2019 <- months_2019[!months_2019 %in% months_2018]
+
+# Crea un nuovo dataframe dei dati con i mesi mancanti e le medie del 2019
+missing_months_data <- data.frame(
+  "Mese" = missing_months_2019,
+  "Media_2018" = NA,  # Assegna NA ai mesi mancanti nel 2018
+  "Media_2019" = monthly_mean_2019[!months_2019 %in% months_2018]
+)
+
+#stabilisco la tolleranza sulla base di quello che ho scritto sopra
+tolleranza <- missing_months_data$Media_2019 * result_vector$Tolleranza
+
+# Aggiungi i valori di tolleranza al dataset
+missing_months_data$Tolleranza_Min_2019 <- abs(missing_months_data$Media_2019 - tolleranza)
+missing_months_data$Tolleranza_Max_2019 <- missing_months_data$Media_2019 + tolleranza
+
+print(missing_months_data)
+```
+
+\
+
+ora concateniamo i due dataset\
+
+```{r}
+# Estrai la colonna "Media_2019" da result_vector
+result_vector_2019 <- result_vector[, c("Mese", "Media_2019", "Tolleranza_Min_2019", "Tolleranza_Max_2019")]
+
+# Estrai le colonne "Media_2018" e "Media_2019" da missing_months_data
+missing_data_2019 <- missing_months_data[, c("Mese", "Media_2019", "Tolleranza_Min_2019", "Tolleranza_Max_2019")]
+
+
+# Concatena i due dataset
+combined_data <- rbind(missing_data_2019, result_vector_2019)
+
+# Aggiungi una colonna di numeri da 1 a 12 come indici
+combined_data$Mese = 1:12
+
+
+# Rimuovi l'indice implicito
+rownames(combined_data) <- NULL
+
+# Visualizza il dataset senza l'indice implicito
+print(combined_data)
+```
+
+\
+
+\
+
+```{r}
+# Estrai il mese dalla data e crea un nuovo dataframe
+monthly_mean_2021_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2021), "%m")),
+  "Media_2021" = coredata(monthly_mean_2021)
+)
+monthly_mean_2022_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2022), "%m")),
+  "Media_2022" = coredata(monthly_mean_2022)
+)
+monthly_mean_2023_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2023), "%m")),
+  "Media_2023" = coredata(monthly_mean_2023)
+)
+
+# Visualizza i nuovi dataframes
+print(monthly_mean_2021_new)
+print(monthly_mean_2022_new)
+print(monthly_mean_2023_new)
+```
+
+\
+
+\
+
+```{r}
+# Verifica le lunghezze dei dataframe mensili
+length_2021 <- nrow(monthly_mean_2021_new)
+length_2022 <- nrow(monthly_mean_2022_new)
+
+# Trova la lunghezza minima tra i dataframe
+min_length <- min(length_2021, length_2022)
+
+# Seleziona solo le prime 'min_length' righe da entrambi i dataframe
+monthly_mean_2021_new <- monthly_mean_2021_new[1:min_length, ]
+monthly_mean_2022_new <- monthly_mean_2022_new[1:min_length, ]
+monthly_mean_2023_new <- monthly_mean_2023_new[1:5, ]
+# Creazione di un nuovo dataframe per i confronti
+confronti <- data.frame(  
+  "Mese" = rep(1:12, times = 1),  # Mesi da 1 a 12 per due anni
+  "Media_2021" = monthly_mean_2021_new$Media,
+  "Media_2022" = monthly_mean_2022_new$Media,
+  "Tolleranza_Min" = combined_data$Tolleranza_Min[1:min_length],
+  "Tolleranza_Max" = combined_data$Tolleranza_Max[1:min_length]
+)
+
+confronti1 <- data.frame(
+  "Anno" = rep(c(2023), each = 5),  # Ripeti l'anno per ogni mese
+  "Mese" = rep(1:5, times = 1),  # Mesi da 1 a 12 per due anni
+  "Media_2023" = monthly_mean_2023_new$Media,
+  "Tolleranza_Min" = combined_data$Tolleranza_Min[1:5],
+  "Tolleranza_Max" = combined_data$Tolleranza_Max[1:5]
+)
+# Aggiungi una colonna di confronto per ciascun anno
+confronti$Confronto_2021 <- confronti$Media_2021 >= confronti$Tolleranza_Min & confronti$Media_2021 <= confronti$Tolleranza_Max
+confronti$Confronto_2022 <- confronti$Media_2022 >= confronti$Tolleranza_Min & confronti$Media_2022 <= confronti$Tolleranza_Max
+
+confronti1$Confronto_2023 <- confronti1$Media_2023 >= confronti1$Tolleranza_Min & confronti1$Media_2023 <= confronti1$Tolleranza_Max
+
+# Visualizza il dataframe di confronto
+print(confronti)
+print(confronti1)
+```
+
+\
+
+facciamo il cut\
+
+```{r}
+# Filtra la serie storica a partire da luglio 2021
+dtts_july_2021 <- R2_LT["2021-07-01/"]
+plot(dtts_july_2021)
+```
+
+# Inizio costruzione modello LSTM2
+
+```{r}
+time_series <- ts(dtts_july_2021)
+
+train <- dtts_july_2021["2021-07-01/2022-12-31"]
+val <- dtts_july_2021["2023-01-01/2023-05-03"]
+```
+
+\
+
+\
+
+```{r}
+ts_train =ts(train)
+ts_val = ts(val)
+dim(ts_train)
+dim(ts_val)
+```
+
+\
+
+\
+
+```{r}
+
+# Selezione dei dati da luglio 2021 ad aprile 2023
+
+R2_1 <- R2[986:1637, ]
+
+# Rimozione giorni per passare il numero corretto di dati nel batch size del modello
+
+R2_2 <- R2_1[-c(31, 62, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 164, 315, 376, 407, 468, 529),]
+
+# Verifica le versioni dei pacchetti
+packageVersion("dplyr")
+packageVersion("tibble")
+
+# Riprova il tuo codice
+df_train <- R2_2[1:510,] 
+df_val <- R2_2[511:630,] 
+
+df <- bind_rows(
+    df_train %>% add_column(key = "training"),
+    df_val %>% add_column(key = "validation")) 
+
+```
+
+\
+
+\
+
+```{r}
+# Imposta il seme per la riproducibilità
+set.seed(123)
+tensorflow::tf$random$set_seed(123)
+
+# Prepara i dati
+# Supponendo che dtts_june_2021 sia il tuo dataset con la serie temporale
+# (assicurati che dtts_june_2021 sia un vettore numerico o una matrice)
+time_series <- ts(dtts_july_2021)
+train <- dtts_july_2021["2021-06-01/2022-12-31"]
+val <- dtts_july_2021["2023-01-01/2023-05-03"]
+
+# Normalizza i dati
+train_mean <- mean(train)
+train_sd <- sd(train)
+train <- (train - train_mean) / train_sd
+val <- (val - train_mean) / train_sd
+
+# Crea sequenze di input e output
+sequence_length <- 10  # Lunghezza della sequenza
+train_sequences <- array(0, dim = c(length(train) - sequence_length + 1, sequence_length, 1))
+val_sequences <- array(0, dim = c(length(val) - sequence_length + 1, sequence_length, 1))
+
+for (i in 1:(length(train) - sequence_length + 1)) {
+  train_sequences[i,,] <- train[i:(i + sequence_length - 1)]
+}
+
+for (i in 1:(length(val) - sequence_length + 1)) {
+  val_sequences[i,,] <- val[i:(i + sequence_length - 1)]
+}
+
+# Crea la RNN
+model <- keras_model_sequential()
+model %>%
+  layer_lstm(units = 50, input_shape = c(sequence_length, 1)) %>%
+  layer_dense(units = 1)
+
+# Compila il modello
+model %>% compile(
+  optimizer = optimizer_adam(),
+  loss = "mse"
+)
+
+# Addestra il modello
+model %>% fit(
+  x = train_sequences,
+  y = train[sequence_length:length(train)],
+  epochs = 10,
+  batch_size = 32,
+  validation_data = list(val_sequences, val[sequence_length:length(val)])
+)
+# Previsione sulla serie temporale di validazione
+predicted_val <- model %>% predict(val_sequences)
+
+# Denormalizza i dati
+predicted_val <- predicted_val * train_sd + train_mean
+val <- val * train_sd + train_mean
+
+```
+
+# Indici lstm2
+
+```{r}
+mape_lstm2 <- mean(abs((val[sequence_length:length(val)] - predicted_val) / val[sequence_length:length(val)]) * 100, na.rm = TRUE)
+rmse_lstm2 <- sqrt(mean((predicted_val - val[sequence_length:length(val)])^2))
+mae_lstm2 <- mean(abs(predicted_val - val[sequence_length:length(val)]))
+mpe_lstm2 <- mean((predicted_val - val[sequence_length:length(val)]) / val[sequence_length:length(val)]) * 100
+me_lstm2 <- mean(predicted_val - val[sequence_length:length(val)])
+
+```
+
+\
+
+# Tabella finale valori:
+
+\
+
+```{r}
+results_table_lstm2 <- data.frame(
+  Model = "LSTM2",
+  ME = me_lstm2,
+  RMSE = rmse_lstm2,
+  MAE = mae_lstm2,
+  MPE = mpe_lstm2,
+  MAPE = mape_lstm2
+)
+
+# Stampare la tabella
+print(results_table_lstm2)
+```
+
+\
+
+# Previsioni test set lstm2:
+
+\
+
+```{r}
+
+
+# Installa o carica i pacchetti necessari
+if (!requireNamespace("dplyr", quietly = TRUE)) {
+  install.packages("dplyr")
+}
+if (!requireNamespace("tibble", quietly = TRUE)) {
+  install.packages("tibble")
+}
+if (!requireNamespace("keras", quietly = TRUE)) {
+  install.packages("keras")
+}
+library(dplyr)
+library(tibble)
+library(keras)
+
+
+ggplot() +
+  autolayer(ts(df_val$LT_R2), series="Validation",size=0.4) +
+  autolayer(ts(predicted_val),
+                  series="Previsione", size=0.4)+
+  xlab("Time") +
+  ylab("Value")+
+  scale_color_manual(values=c("#F44611", "#003399"))+
+  theme(legend.title = element_blank())
+
+```
+
+\

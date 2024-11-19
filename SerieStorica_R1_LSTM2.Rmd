@@ -1,0 +1,245 @@
+---
+title: "Ristorante 1-Serie Storica"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-10-30"
+---
+
+Preparazione dati per modello LSTM2:
+
+```{r}
+
+# Caricamento delle librerie
+
+library(xts)
+library(forecast)
+library(lubridate)
+library(tsfknn)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(recipes)
+library(tensorflow)
+library(reticulate)
+if (!require(keras)) install.packages("keras")
+library(keras)
+#use_condaenv("r-tensorflow", required = TRUE)
+```
+\
+
+\
+
+```{r}
+#if (!require(remotes)) install.packages("remotes")
+#remotes::install_github("rstudio/tensorflow", force = TRUE)
+```
+\
+```{r}
+#py_install("tensorflow")
+```
+
+\
+```{r}
+# Carico i dati dal file CSV
+dt <- read.csv("R1.csv")
+
+# Converti la colonna "Date" nel formato "YYYY-MM-DD"
+dt$Date <- as.Date(dt$data, format = "%Y-%m-%d")
+
+# Crea la serie storica con le date nel formato "YYYY-MM-DD" e i valori da LT_R1
+dtts <- xts(
+  dt$LT_R1, # Selezioniamo la colonna LT_R1 come dati sull'asse delle y
+  dt$Date # Utilizziamo la colonna "Date" formattata come oggetti di data sull'asse delle x
+)
+
+
+# Plotta la serie storica
+plot(dtts)
+
+```
+
+
+
+
+```{r}
+x <- log(dtts)
+plot(x)
+Acf(x, )
+Pacf(x)
+```
+
+
+
+```{r}
+# Filtra la serie storica a partire da giugno 2021
+dtts_cut <- dtts["2022-01-01/2023-04-30"]
+plot(dtts_cut)
+```
+
+
+# Costruzione modello LSTM2
+
+\
+```{r}
+time_series <- ts(dtts_cut)
+train <- dtts_cut["2022-01-01/2023-03-31"]
+val <- dtts_cut["2023-04-01/2023-04-30"]
+```
+\
+
+\
+```{r}
+
+# Stabilisco dimensioni train e test dopo averli convertiti in formato ts
+
+ts_train =ts(train)
+ts_val = ts(val)
+dim(ts_train)
+dim(ts_val)
+```
+
+
+\
+Modello LSTM 2
+\
+
+```{r}
+
+# Selezione dei dati da giugno 2021 ad aprile 2023
+
+dt1 <- dt[1170:1654, ]
+
+# Rimozione giorni per passare il numero corretto di dati nel batch size del modello
+
+#dt1 <- dt1[-c(151, 212, 243, 304, 365, 426, 457, 518, 579, 700, 701, 702),]
+
+# Verifico le versioni dei pacchetti
+
+packageVersion("dplyr")
+packageVersion("tibble")
+
+# Suddivido i dati in train e validation set sulla base delle dimensioni identificate sopra.
+
+df_train <- dt1[1:450,] 
+df_val <- dt1[456:485,] 
+
+df <- bind_rows(
+    df_train %>% add_column(key = "training"),
+    df_val %>% add_column(key = "validation")) 
+
+```
+
+\
+
+```{r}
+
+# Imposto il seme per la riproducibilità
+
+set.seed(123)
+tensorflow::tf$random$set_seed(123)
+
+# Preparo i dati
+
+time_series <- ts(dtts_cut)
+train <- dtts_cut["2022-01-01/2023-03-31"]
+val <- dtts_cut["2023-04-01/2023-04-30"]
+# Normalizzo i dati
+
+train_mean <- mean(train)
+train_sd <- sd(train)
+train <- (train - train_mean) / train_sd
+val <- (val - train_mean) / train_sd
+
+# Creo sequenze di input e output
+
+sequence_length <- 10  # Lunghezza della sequenza
+train_sequences <- array(0, dim = c(length(train), sequence_length, 1))
+val_sequences <- array(0, dim = c(length(val), sequence_length, 1))
+
+for (i in 1:(length(train))) {
+  train_sequences[i,,] <- train[i]
+}
+
+for (i in 1:(length(val))) {
+  val_sequences[i,,] <- val[i]
+}
+
+# Creo la RNN
+
+model <- keras_model_sequential()
+model %>%
+  layer_lstm(units = 50, input_shape = c(sequence_length, 1)) %>%
+  layer_dense(units = 1)
+
+# Compilo il modello
+
+model %>% compile(
+  optimizer = optimizer_adam(),
+  loss = "mse"
+)
+
+# Addestro il modello
+
+model %>% fit(
+  x = train_sequences,
+  y = train,
+  epochs = 20,
+  batch_size = 32,
+  validation_data = list(val_sequences, val)
+)
+
+# Previsione sulla serie temporale di validazione
+
+predicted_val <- model %>% predict(val_sequences)
+
+# Denormalizzo i dati
+
+predicted_val <- predicted_val * train_sd + train_mean
+val <- val * train_sd + train_mean
+
+```
+\
+Indici lstm2
+\
+
+```{r}
+mape_lstm2 <- mean(abs((val - predicted_val) / val) * 100, na.rm = TRUE)
+rmse_lstm2 <- sqrt(mean((predicted_val - val)^2))
+mae_lstm2 <- mean(abs(predicted_val - val))
+mpe_lstm2 <- mean((predicted_val - val) / val) * 100
+me_lstm2 <- mean(predicted_val - val)
+
+```
+\
+Tabella finale valori:
+\
+```{r}
+results_table_lstm2 <- data.frame(
+  Model = "LSTM2",
+  ME = me_lstm2,
+  RMSE = rmse_lstm2,
+  MAE = mae_lstm2,
+  MPE = mpe_lstm2,
+  MAPE = mape_lstm2
+)
+
+# Stampare la tabella
+print(results_table_lstm2)
+```
+\
+Previsioni test set lstm2:
+\
+
+```{r}
+
+
+ggplot() +
+  autolayer(ts(df_val$LT_R1), series="Actual values",size=0.4) +
+  autolayer(ts(predicted_val),
+                  series="Prediction", size=0.4)+
+  xlab("Days of April") +
+  ylab("Total Revenue")+
+  scale_color_manual(values=c("#F44611", "#003399"))+
+  theme(legend.title = element_blank())
+```

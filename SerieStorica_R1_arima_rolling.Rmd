@@ -1,0 +1,367 @@
+---
+title: "Ristorante 1 - Modelli Arima Rolling"
+output: html_document
+date: "2023-10-30"
+---
+
+```{r}
+
+#Importo le librerie
+library(xts)
+library(forecast)
+library(lubridate)
+```
+
+```{r}
+# Carica i dati dal file CSV
+dt <- read.csv("R1.csv")
+
+# Converti la colonna "Date" nel formato "YYYY-MM-DD"
+dt$Date <- as.Date(dt$data, format = "%Y-%m-%d")
+
+# Crea la serie storica con le date nel formato "YYYY-MM-DD" e i valori da LT_R1
+dtts <- xts(
+  dt$LT_R1, # Selezioniamo la colonna LT_R1 come dati sull'asse delle y
+  dt$Date # Utilizziamo la colonna "Date" formattata come oggetti di data sull'asse delle x
+)
+
+
+
+# Plotta la serie storica
+plot(dtts)
+
+```
+
+```{r}
+# Filtra la serie storica a partire da gennaio 2022
+dtts_cut <- dtts["2022-01-01/2023-04-30"]
+dtts_train <- dtts["2022-01-01/2023-03-31"]
+plot(dtts_cut)
+```
+
+```{r}
+#time_series<- dtts_june_2021
+time_series <- ts(dtts_train, frequency=7)
+#plot(time_series)
+```
+
+```{r}
+time_series_new<-log(time_series)
+plot(time_series_new)
+time_series_new |> Acf(36)
+time_series_new |> Pacf(36)
+```
+
+## Modello Arima di ordine 2
+
+```{r}
+
+# Inizializza vettori per salvare gli errori ad ogni iterazione
+rmse_vect <- numeric(30)
+mae_vect <- numeric(30)
+mape_vect <- numeric(30)
+pred <- numeric(30)
+
+for (i in 0:29) {
+  # Aggiungi un giorno a time_series
+  time_series <- ts(head(dtts_cut, 455 + i), frequency = frequency(time_series))
+  
+  # Calcola il modello ARIMA con il nuovo time_series
+  mod_arima <- Arima(time_series,
+                     c(2,0,0),
+                     c(1,1,1),
+                     include.constant = TRUE,
+                     lambda = 0
+  )
+
+  # Calcola la previsione per il prossimo giorno
+  previsione <- forecast(mod_arima, h = 1)
+  pred[i+1] <- previsione$mean
+  # Calcola e salva gli errori
+  rmse_vect[i+1] <- sqrt(mean(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  mae_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  #actual2 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+  mape_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1]) / dtts_cut[455+i+1] * 100), na.rm = TRUE)
+}
+
+rmse_vect <- data.frame(rmse_vect)
+mae_vect <- data.frame(mae_vect)
+mape_vect <- data.frame(mape_vect)
+pred <- data.frame(pred)
+
+```
+
+```{r}
+c(
+    RMSE = mean(rmse_vect$rmse_vect),
+    MAE = mean(mae_vect$mae_vect),
+    MAPE = mean(mape_vect$mape_vect)
+  )
+
+```
+
+```{r}
+pred$date <- as.Date(seq(as.Date("2023-04-01"), as.Date("2023-04-30"), by = "days"))
+pred <- xts(pred$pred, pred$date)
+```
+
+```{r}
+Predictions <- pred
+plot(Predictions, col="darkblue",lwd=2)
+lines(dtts_cut["2023-04-01/2023-04-30"], col="green",lwd=2)
+# Aggiungi la legenda
+legend("topright", legend = c("Predictions", "Actual"), col = c("darkblue", "green"), lwd = 2)
+```
+
+In generale, il modello sembra avere buona precisione basandosi sui valori di RMSE, MAE e MAPE. Tuttavia, la non normalità dei residui (come indicato dal test di Shapiro-Wilk) potrebbe suggerire che potrebbero esserci ulteriori miglioramenti da apportare al modello o potrebbe essere necessario esaminare ulteriormente la struttura dei dati o del modello.
+
+C'è una correlazione significativa al di fuori dei limiti nella funzione di autocorrelazione parziale (PACF), potrebbe indicare che ci sono componenti del modello che non sono stati adeguatamente catturati-\> proveremo altri modelli con un ordine più alto del componente AR nel modello per vedere quale modello riduce meglio la quantità di memoria ancora presente nei residui. Proviamo anche l'auto.arima:
+
+## Modello Arima di ordine 3
+
+```{r}
+
+# Inizializza vettori per salvare gli errori ad ogni iterazione
+rmse_vect <- numeric(30)
+mae_vect <- numeric(30)
+mape_vect <- numeric(30)
+pred <- numeric(30)
+
+for (i in 0:29) {
+  # Aggiungi un giorno a time_series
+  time_series <- ts(head(dtts_cut, 455 + i), frequency = frequency(time_series))
+  
+  # Calcola il modello ARIMA con il nuovo time_series
+  mod_arima <- Arima(time_series,
+                     c(3,0,0),
+                     c(1,1,1),
+                     include.constant = TRUE,
+                     lambda = 0
+  )
+
+  # Calcola la previsione per il prossimo giorno
+  previsione <- forecast(mod_arima, h = 1)
+  pred[i+1] <- previsione$mean
+  # Calcola e salva gli errori
+  rmse_vect[i+1] <- sqrt(mean(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  mae_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  #actual2 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+  mape_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1]) / dtts_cut[455+i+1] * 100), na.rm = TRUE)
+}
+
+rmse_vect <- data.frame(rmse_vect)
+mae_vect <- data.frame(mae_vect)
+mape_vect <- data.frame(mape_vect)
+pred <- data.frame(pred)
+
+```
+
+```{r}
+c(
+    RMSE = mean(rmse_vect$rmse_vect),
+    MAE = mean(mae_vect$mae_vect),
+    MAPE = mean(mape_vect$mape_vect)
+  )
+
+```
+
+```{r}
+pred$date <- as.Date(seq(as.Date("2023-04-01"), as.Date("2023-04-30"), by = "days"))
+pred <- xts(pred$pred, pred$date)
+```
+
+```{r}
+Predictions <- pred
+plot(Predictions, col="darkblue",lwd=2)
+lines(dtts_cut["2023-04-01/2023-04-30"], col="green",lwd=2)
+# Aggiungi la legenda
+legend("topright", legend = c("Predictions", "Actual"), col = c("darkblue", "green"), lwd = 2)
+```
+
+## Modello Arima di ordine 4
+
+```{r}
+
+# Inizializza vettori per salvare gli errori ad ogni iterazione
+rmse_vect <- numeric(30)
+mae_vect <- numeric(30)
+mape_vect <- numeric(30)
+pred <- numeric(30)
+
+for (i in 0:29) {
+  # Aggiungi un giorno a time_series
+  time_series <- ts(head(dtts_cut, 455 + i), frequency = frequency(time_series))
+  
+  # Calcola il modello ARIMA con il nuovo time_series
+  mod_arima <- Arima(time_series,
+                     c(4,0,0),
+                     c(1,1,1),
+                     include.constant = TRUE,
+                     lambda = 0
+  )
+
+  # Calcola la previsione per il prossimo giorno
+  previsione <- forecast(mod_arima, h = 1)
+  pred[i+1] <- previsione$mean
+  # Calcola e salva gli errori
+  rmse_vect[i+1] <- sqrt(mean(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  mae_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  #actual2 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+  mape_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1]) / dtts_cut[455+i+1] * 100), na.rm = TRUE)
+}
+
+rmse_vect <- data.frame(rmse_vect)
+mae_vect <- data.frame(mae_vect)
+mape_vect <- data.frame(mape_vect)
+pred <- data.frame(pred)
+
+```
+
+```{r}
+c(
+    RMSE = mean(rmse_vect$rmse_vect),
+    MAE = mean(mae_vect$mae_vect),
+    MAPE = mean(mape_vect$mape_vect)
+  )
+
+```
+
+```{r}
+pred$date <- as.Date(seq(as.Date("2023-04-01"), as.Date("2023-04-30"), by = "days"))
+pred <- xts(pred$pred, pred$date)
+```
+
+```{r}
+Predictions <- pred
+plot(Predictions, col="darkblue",lwd=2)
+lines(dtts_cut["2023-04-01/2023-04-30"], col="green",lwd=2)
+# Aggiungi la legenda
+legend("topright", legend = c("Predictions", "Actual"), col = c("darkblue", "green"), lwd = 2)
+```
+
+## Modello Arima di ordine 5
+
+```{r}
+
+# Inizializza vettori per salvare gli errori ad ogni iterazione
+rmse_vect <- numeric(30)
+mae_vect <- numeric(30)
+mape_vect <- numeric(30)
+pred <- numeric(30)
+
+for (i in 0:29) {
+  # Aggiungi un giorno a time_series
+  time_series <- ts(head(dtts_cut, 455 + i), frequency = frequency(time_series))
+  
+  # Calcola il modello ARIMA con il nuovo time_series
+  mod_arima <- Arima(time_series,
+                     c(5,0,0),
+                     c(1,1,1),
+                     include.constant = TRUE,
+                     lambda = 0
+  )
+
+  # Calcola la previsione per il prossimo giorno
+  previsione <- forecast(mod_arima, h = 1)
+  pred[i+1] <- previsione$mean
+  # Calcola e salva gli errori
+  rmse_vect[i+1] <- sqrt(mean(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  mae_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  #actual2 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+  mape_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1]) / dtts_cut[455+i+1] * 100), na.rm = TRUE)
+}
+
+rmse_vect <- data.frame(rmse_vect)
+mae_vect <- data.frame(mae_vect)
+mape_vect <- data.frame(mape_vect)
+pred <- data.frame(pred)
+
+```
+
+```{r}
+c(
+    RMSE = mean(rmse_vect$rmse_vect),
+    MAE = mean(mae_vect$mae_vect),
+    MAPE = mean(mape_vect$mape_vect)
+  )
+
+```
+
+```{r}
+pred$date <- as.Date(seq(as.Date("2023-04-01"), as.Date("2023-04-30"), by = "days"))
+pred <- xts(pred$pred, pred$date)
+```
+
+```{r}
+Predictions <- pred
+plot(Predictions, col="darkblue",lwd=2)
+lines(dtts_cut["2023-04-01/2023-04-30"], col="green",lwd=2)
+# Aggiungi la legenda
+legend("topright", legend = c("Predictions", "Actual"), col = c("darkblue", "green"), lwd = 2)
+```
+
+## Modello Arima di ordine 6
+
+```{r}
+
+# Inizializza vettori per salvare gli errori ad ogni iterazione
+rmse_vect <- numeric(30)
+mae_vect <- numeric(30)
+mape_vect <- numeric(30)
+pred <- numeric(30)
+
+for (i in 0:29) {
+  # Aggiungi un giorno a time_series
+  time_series <- ts(head(dtts_cut, 455 + i), frequency = frequency(time_series))
+  
+  # Calcola il modello ARIMA con il nuovo time_series
+  mod_arima <- Arima(time_series,
+                     c(6,0,0),
+                     c(1,1,1),
+                     include.constant = TRUE,
+                     lambda = 0
+  )
+
+  # Calcola la previsione per il prossimo giorno
+  previsione <- forecast(mod_arima, h = 1)
+  pred[i+1] <- previsione$mean
+  # Calcola e salva gli errori
+  rmse_vect[i+1] <- sqrt(mean(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  mae_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1])^2))
+  #actual2 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+  mape_vect[i+1] <- mean(abs(((dtts_cut[455+i+1]) - pred[i+1]) / dtts_cut[455+i+1] * 100), na.rm = TRUE)
+}
+
+rmse_vect <- data.frame(rmse_vect)
+mae_vect <- data.frame(mae_vect)
+mape_vect <- data.frame(mape_vect)
+pred <- data.frame(pred)
+
+```
+
+```{r}
+c(
+    RMSE = mean(rmse_vect$rmse_vect),
+    MAE = mean(mae_vect$mae_vect),
+    MAPE = mean(mape_vect$mape_vect)
+  )
+
+```
+
+```{r}
+pred$date <- as.Date(seq(as.Date("2023-04-01"), as.Date("2023-04-30"), by = "days"))
+pred <- xts(pred$pred, pred$date)
+```
+
+```{r}
+Predictions <- pred
+plot(Predictions, col="darkblue",lwd=2)
+lines(dtts_cut["2023-04-01/2023-04-30"], col="green",lwd=2)
+# Aggiungi la legenda
+legend("topright", legend = c("Predictions", "Actual"), col = c("darkblue", "green"), lwd = 2)
+```

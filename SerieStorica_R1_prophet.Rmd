@@ -1,0 +1,165 @@
+---
+title: "Ristorante 1-Serie Storica"
+output: html_document
+date: "2023-10-30"
+---
+
+```{r}
+library(xts)
+library(forecast)
+library(lubridate)
+library(progress)
+```
+
+
+
+```{r}
+# Carica i dati dal file CSV
+dt <- read.csv("R1.csv")
+
+# Converti la colonna "Date" nel formato "YYYY-MM-DD"
+dt$Date <- as.Date(dt$data, format = "%Y-%m-%d")
+
+# Crea la serie storica con le date nel formato "YYYY-MM-DD" e i valori da LT_R1
+dtts <- xts(
+  dt$LT_R1, # Selezioniamo la colonna LT_R1 come dati sull'asse delle y
+  dt$Date # Utilizziamo la colonna "Date" formattata come oggetti di data sull'asse delle x
+)
+
+
+# Plotta la serie storica
+plot(dtts)
+
+```
+
+
+```{r}
+# Filtra la serie storica a partire da gennaio 2022
+dtts_june_2021 <- dtts["2022-01-01/"]
+plot(dtts_june_2021)
+```
+
+```{r}
+library(dplyr)
+library(prophet)
+
+# Supponiamo che il tuo dataframe sia chiamato 'df'
+df <- data.frame(
+  ds = dt$Date,
+  y = dt$LT_R1
+)
+
+# Filtra solo le righe con date successive all'1 gennaio 2022.fino a 3 maggio 2023
+df_filtered <- df %>% filter(ds > as.Date("2022-01-01"))
+```
+
+```{r}
+tail(df_filtered,1)
+```
+
+Divide in train and test. train è da 1 gennaio 2022 a 31 marzo 2023. il test è sul mese di aprile 2023
+```{r}
+library(dplyr)
+
+# Assuming your dataframe is named 'df'
+df_filtered <- df %>% filter(ds > as.Date("2022-01-01"))
+
+# Set the start and end dates for training and testing
+start_date_train <- as.Date("2022-01-01")
+end_date_train <- as.Date("2023-03-31")
+
+start_date_test <- as.Date("2023-04-01")
+end_date_test <- as.Date("2023-04-30")  # Assumes the last date in df_filtered is the end of the test set
+
+# Create df_filtered_train
+df_filtered_train <- df_filtered %>% filter(ds >= start_date_train & ds <= end_date_train)
+print(tail(df_filtered_train,1))
+# Create df_filtered_test
+df_filtered_test <- df_filtered %>% filter(ds >= start_date_test & ds <= end_date_test)
+print(head(df_filtered_test))
+print(tail(df_filtered_test,1))
+```
+I will forecast 30 days with the prophet model and see how well it performs on the test data
+```{r}
+# Numero di iterazioni desiderate
+n_iterations <- 30  # Puoi impostare il numero desiderato di iterazioni
+pb <- progress_bar$new(total = n_iterations, format = "[:bar] :percent :elapsed")
+# Ora puoi utilizzare 'df_filtered' con la libreria 'prophet'
+for (i in 1:n_iterations) {
+  # Crea il modello con il dataframe attuale
+  pb$tick()
+  model <- prophet(df_filtered_train, yearly.seasonality = TRUE, daily.seasonality = TRUE, weekly.seasonality = TRUE)
+  
+  # Crea un dataframe per il giorno successivo
+  future <- make_future_dataframe(model, periods = 1, include_history = FALSE)
+  #print(tail(future, 1))
+  # Genera la previsione per il giorno successivo
+  forecast <- predict(model, future) #oggetto che predice i forecast
+  # Aggiungi la previsione al dataframe
+  df_filtered_train <- rbind(df_filtered_train, data.frame(ds = forecast$ds[nrow(forecast)], y = forecast$yhat[nrow(forecast)])) }
+pb$terminate()
+```
+
+ora df filtered train ha tutto il mese di aprile. perchè è stato aggiunto allenando il modello
+```{r}
+tail(df_filtered_train,1)
+```
+
+isolo i dati predetti
+```{r}
+df_filtered_train_comparison<-tail(df_filtered_train,30)
+```
+
+```{r}
+df_filtered_train_comparison
+```
+
+```{r}
+losses_mod_sin <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+```
+
+```{r}
+losses_mod_sin(df_filtered_test$y, df_filtered_train_comparison$y)
+```
+
+
+```{r}
+# Assuming both 'df_filtered_train_comparison' and 'df_filtered_test' have 'ds' as Date and 'y' as numeric
+df_filtered_train_comparison$ds <- as.Date(df_filtered_train_comparison$ds)
+df_filtered_test$ds <- as.Date(df_filtered_test$ds)
+
+# Install and load the 'ggplot2' package if not already installed
+# install.packages("ggplot2")
+library(ggplot2)
+
+# Create a time series plot with lines for both datasets
+plot_prophet<-ggplot() +
+  geom_line(data = df_filtered_train_comparison, aes(x = ds, y = y, color = "Predicted"), size = 1) +
+  geom_line(data = df_filtered_test, aes(x = ds, y = y, color = "Actual"), size = 1) +
+  labs(x = "Date", y = "Daily Revenues", title = "April 2023 Daily Revenue Forecast: Predicted vs Actual Values") +
+  scale_color_manual(values = c("Predicted" = "red", "Actual" = "blue"))
+```
+
+```{r}
+plot_prophet
+```
+
+```{r}
+# Save the plot as a file (e.g., in PNG format)
+#ggsave("/Users/costanzapagnin/Desktop/ds_lab/prophet.png", plot_prophet, width = 12, height = 8, dpi = 300)
+
+```
+
+
+
+

@@ -1,0 +1,1419 @@
+---
+title: "Ristorante 5 - Modelli Arima"
+date: "2023-11-08"
+output: html_document
+---
+
+
+```{r}
+#Importo le librerie necessarie
+library(xts)
+library(forecast)
+library(lubridate)
+```
+
+```{r}
+
+
+# Carica i dati dal file CSV
+dt <- read.csv("R5.csv")
+
+# Converti la colonna "Date" nel formato "YYYY-MM-DD"
+dt$Date <- as.Date(dt$data, format = "%Y-%m-%d")
+
+# Crea la serie storica con le date nel formato "YYYY-MM-DD" e i valori da LT_R5
+dtts <- xts(
+  dt$LT_R5, # Selezioniamo la colonna LT_R5 come dati sull'asse delle y
+  dt$Date # Utilizziamo la colonna "Date" formattata come oggetti di data sull'asse delle x
+)
+
+
+
+# Plotta la serie storica
+plot(dtts)
+
+```
+
+
+
+
+```{r}
+# Filtra la serie storica per il 2018
+dtts_2018 <- dtts["2018-01-01/2018-12-31"]
+
+# Filtra la serie storica per il 2019
+dtts_2019 <- dtts["2019-01-01/2019-12-31"]
+
+# Filtra la serie storica per il 2021
+dtts_2021 <- dtts["2021-01-01/2021-12-31"]
+
+# Filtra la serie storica per il 2022
+dtts_2022 <- dtts["2022-01-01/2022-12-31"]
+
+# Filtra la serie storica per il 2022
+dtts_2023 <- dtts["2023-01-01/2023-12-31"]
+
+# Calcola la media mensile per il 2018
+monthly_mean_2018 <- apply.monthly(dtts_2018, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2019 <- apply.monthly(dtts_2019, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2021 <- apply.monthly(dtts_2021, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2022 <- apply.monthly(dtts_2022, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2023 <- apply.monthly(dtts_2023, FUN = mean)
+
+# Estrai i mesi dai dati
+months_2018 <- as.numeric(format(index(monthly_mean_2018), "%m"))
+months_2019 <- as.numeric(format(index(monthly_mean_2019), "%m"))
+
+# Trova gli indici dei mesi comuni tra il 2018 e il 2019
+common_month_indices <- which(months_2018 %in% months_2019)
+
+# Crea un vettore con il mese di riferimento e la media corrispondente per i mesi comuni
+result_vector <- data.frame(
+  "Mese" = months_2018[common_month_indices],
+  "Media_2018" = as.vector(monthly_mean_2018[common_month_indices]),
+  "Media_2019" = as.vector(monthly_mean_2019[common_month_indices])
+)
+
+# Calcola la differenza percentuale tra le medie del 2018 e del 2019 per lo stesso mese
+result_vector$Differenza_Percentuale <- 
+  ((result_vector$Media_2018 - result_vector$Media_2019) / result_vector$Media_2018)
+
+# Calcola il valore massimo (in valore assoluto) delle differenze percentuali
+max_diff_percent <- max(abs(result_vector$Differenza_Percentuale))
+
+# Aggiungi colonne Tolleranza_Min e Tolleranza_Max
+result_vector$Tolleranza <- max_diff_percent
+
+print(result_vector)
+
+```
+
+
+```{r}
+#stabilisco la tolleranza sulla base di quello che ho scritto sopra
+tolleranza <- result_vector$Media_2019 * result_vector$Tolleranza 
+
+# Aggiungi i valori di tolleranza al dataset
+result_vector$Tolleranza_Min_2019 <- abs(result_vector$Media_2019 - tolleranza)
+result_vector$Tolleranza_Max_2019 <- result_vector$Media_2019 + tolleranza
+
+print(result_vector)
+```
+
+
+```{r}
+# Estrai i mesi del 2019 che non erano presenti nel 2018
+missing_months_2019 <- months_2019[!months_2019 %in% months_2018]
+
+# Crea un nuovo dataframe dei dati con i mesi mancanti e le medie del 2019
+missing_months_data <- data.frame(
+  "Mese" = missing_months_2019,
+  "Media_2018" = NA,  # Assegna NA ai mesi mancanti nel 2018
+  "Media_2019" = monthly_mean_2019[!months_2019 %in% months_2018]
+)
+
+#stabilisco la tolleranza sulla base di quello che ho scritto sopra
+tolleranza <- missing_months_data$Media_2019 * result_vector$Tolleranza
+
+# Aggiungi i valori di tolleranza al dataset
+missing_months_data$Tolleranza_Min_2019 <- abs(missing_months_data$Media_2019 - tolleranza)
+missing_months_data$Tolleranza_Max_2019 <- missing_months_data$Media_2019 + tolleranza
+
+print(missing_months_data)
+```
+
+
+
+```{r}
+# Estrai la colonna "Media_2019" da result_vector
+result_vector_2019 <- result_vector[, c("Mese", "Media_2019", "Tolleranza_Min_2019", "Tolleranza_Max_2019")]
+
+# Estrai le colonne "Media_2018" e "Media_2019" da missing_months_data
+missing_data_2019 <- missing_months_data[, c("Mese", "Media_2019", "Tolleranza_Min_2019", "Tolleranza_Max_2019")]
+
+
+# Concatena i due dataset
+combined_data <- rbind(missing_data_2019, result_vector_2019)
+
+# Aggiungi una colonna di numeri da 1 a 12 come indici
+combined_data$Mese = 1:12
+
+
+# Rimuovi l'indice implicito
+rownames(combined_data) <- NULL
+
+# Visualizza il dataset senza l'indice implicito
+print(combined_data)
+```
+
+
+
+```{r}
+# Estrai il mese dalla data e crea un nuovo dataframe
+monthly_mean_2021_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2021), "%m")),
+  "Media_2021" = coredata(monthly_mean_2021)
+)
+monthly_mean_2022_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2022), "%m")),
+  "Media_2022" = coredata(monthly_mean_2022)
+)
+monthly_mean_2023_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2023), "%m")),
+  "Media_2023" = coredata(monthly_mean_2023)
+)
+
+# Visualizza i nuovi dataframes
+print(monthly_mean_2021_new)
+print(monthly_mean_2022_new)
+print(monthly_mean_2023_new)
+```
+
+```{r}
+# Verifica le lunghezze dei dataframe mensili
+length_2021 <- nrow(monthly_mean_2021_new)
+length_2022 <- nrow(monthly_mean_2022_new)
+
+# Trova la lunghezza minima tra i dataframe
+min_length <- min(length_2021, length_2022)
+
+# Seleziona solo le prime 'min_length' righe da entrambi i dataframe
+monthly_mean_2021_new <- monthly_mean_2021_new[1:min_length, ]
+monthly_mean_2022_new <- monthly_mean_2022_new[1:min_length, ]
+monthly_mean_2023_new <- monthly_mean_2023_new[1:5, ]
+# Creazione di un nuovo dataframe per i confronti
+confronti <- data.frame(  
+  "Mese" = rep(1:12, times = 1),  # Mesi da 1 a 12 per due anni
+  "Media_2021" = monthly_mean_2021_new$Media,
+  "Media_2022" = monthly_mean_2022_new$Media,
+  "Tolleranza_Min" = combined_data$Tolleranza_Min[1:min_length],
+  "Tolleranza_Max" = combined_data$Tolleranza_Max[1:min_length]
+)
+
+confronti1 <- data.frame(
+  "Anno" = rep(c(2023), each = 5),  # Ripeti l'anno per ogni mese
+  "Mese" = rep(1:5, times = 1),  # Mesi da 1 a 12 per due anni
+  "Media_2023" = monthly_mean_2023_new$Media,
+  "Tolleranza_Min" = combined_data$Tolleranza_Min[1:5],
+  "Tolleranza_Max" = combined_data$Tolleranza_Max[1:5]
+)
+# Aggiungi una colonna di confronto per ciascun anno
+confronti$Confronto_2021 <- confronti$Media_2021 >= confronti$Tolleranza_Min & confronti$Media_2021 <= confronti$Tolleranza_Max
+confronti$Confronto_2022 <- confronti$Media_2022 >= confronti$Tolleranza_Min & confronti$Media_2022 <= confronti$Tolleranza_Max
+
+confronti1$Confronto_2023 <- confronti1$Media_2023 >= confronti1$Tolleranza_Min & confronti1$Media_2023 <= confronti1$Tolleranza_Max
+
+# Visualizza il dataframe di confronto
+print(confronti)
+print(confronti1)
+```
+
+
+```{r}
+# Filtra la serie storica a partire da giugno 2021
+dtts_may_2021 <- dtts["2021-05-01/"]
+plot(dtts_may_2021)
+```
+
+```{r}
+time_series <- ts(dtts_may_2021, frequency=7)
+plot(time_series)
+```
+
+```{r}
+time_series_new<-log(time_series)
+time_series_new |> Acf(36)
+time_series_new |> Pacf(36)
+```
+## Modello Arima di ordine 2
+
+```{r}
+# let's try an AR(2)
+library(forecast)
+mod_arima <- Arima(time_series,
+              c(2,0,0), # p, d, q 
+              c(1,1,1), # P, D, Q D=1. because we have performed a seasonal difference
+              include.constant =TRUE, #intercept
+              lambda=0 #because log transformation
+              )
+mod_arima #with drift because constant and one seasonal difference
+```
+
+
+```{r}
+previsione <- forecast(mod_arima, h=242)
+plot(previsione)
+```
+
+
+```{r}
+previsione <- forecast(mod_arima, h = 242)
+plot(previsione$mean, type = "l", ylab = "Valori previsti", xlab = "Tempo", main = "Previsione senza intervalli di confidenza")
+```
+## Stimatori mod 2 Arima
+
+```{r}
+rmse2 <- sqrt(mean(mod_arima$residuals^2))
+rmse2
+
+mae2 <- mean(abs(mod_arima$residuals))
+mae2
+
+actual2 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+mape2 <- mean(abs((mod_arima$residuals / actual2) * 100), na.rm = TRUE)
+mape2
+
+shapiro_test2 <- shapiro.test(mod_arima$residuals)
+shapiro_test2
+
+acf_res2 <- acf(mod_arima$residuals)
+pacf_res2 <- pacf(mod_arima$residuals)
+```
+
+## Modello Arima 2 con sinusoidi come regressori
+
+```{r}
+# Parametri per la stagionalità
+s <- 365.25
+harm <- c(1,2,3)
+freq <- outer(1:length(time_series_new), harm) * 2 * pi / s
+co <- cos(freq)
+si <- sin(freq)
+colnames(co) <- paste0("cos", harm)
+colnames(si) <- paste0("sin", harm)
+X <- cbind(trend=1:length(time_series_new),co, si)
+
+# Divisione in set di addestramento e test
+train_size <- floor(length(time_series_new[1:500]))
+train_y <- time_series_new[1:train_size]
+train_X <- X[1:train_size, ]
+test_y <- time_series_new[(train_size + 1):length(time_series_new)]
+test_X <- X[(train_size + 1):length(time_series_new), ]
+
+# Modello ARIMAX
+mod_sin <- Arima(train_y,
+              order = c(2, 0, 0),
+              seasonal = list(order = c(1, 1, 1), period = 7),
+              xreg = train_X,
+              lambda = 0
+)
+
+# Riassunto del modello
+summary(mod_sin)
+```
+
+```{r}
+# Esegui il forecast
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+## Losses Arima 2 mod_sin
+
+```{r}
+losses_mod_sin <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin(test_y, forecast_result$mean)
+
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses2_mod_sin <- data.frame(Arima2 = losses_mod_sin(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses2_mod_sin)
+
+```
+
+## Modello Arima 2 con variabili dummy come regressori
+
+```{r}
+plot(mod_sin$residuals)
+# Ottenere gli indici dei residui con valore maggiore o uguale a 0.05 o minore o uguale a -0.05
+indices_high_residues <- which(mod_sin$residuals >= 0.05 | mod_sin$residuals <= -0.05)
+indices_high_residues
+```
+
+
+
+dove dovrebbero essere le dummy:
+
+192 (immacolata), 208 (natale), 321 (pasqua), 322 (lunedì dell'angelo), 439 (vicino a ferragosto), 518 (halloween), 573 (natale), 574 (santo stefano), 579 (Capodanno)
+
+
+```{r}
+# Creazione di variabili dummy per i giorni specifici 
+special_days <-indices_high_residues
+
+# Creazione di variabili dummy
+dummy_vars_train <- matrix(0, nrow = train_size, ncol = length(special_days))
+dummy_vars_test <- matrix(0, nrow = length(test_y), ncol = length(special_days))
+
+for (i in seq_along(special_days)) {
+  day_index <- which(train_X[, "trend"] == special_days[i])
+  dummy_vars_train[day_index, i] <- 1
+  
+  day_index_test <- which(test_X[, "trend"] == special_days[i])
+  dummy_vars_test[day_index_test, i] <- 1
+}
+
+# Aggiunta delle variabili dummy al set di addestramento
+train_X <- cbind(train_X, dummy_vars_train)
+
+# Aggiunta delle variabili dummy al set di test
+test_X <- cbind(test_X, dummy_vars_test)
+
+mod_sin_dummy <- Arima(train_y,
+                       order = c(2, 0, 0),
+                       seasonal = list(order = c(1, 1, 1), period = 7),
+                       xreg = train_X,
+                       lambda = 0  # Puoi sperimentare con altri metodi
+)
+
+# Esegui il forecast
+forecast_result <- forecast(mod_sin_dummy , h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin_dummy, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+
+```{r}
+plot(mod_sin_dummy$residuals) 
+```
+
+
+
+
+## Losses Arima mod 2 dummy
+
+```{r}
+losses_mod_sin_dummy <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin_dummy(test_y, forecast_result$mean)
+
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses2_mod_sin_dummy <- data.frame(Arima2 = losses_mod_sin_dummy(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses2_mod_sin_dummy)
+```
+
+
+## Modello Arima di ordine 3
+
+```{r}
+# let's try an AR(3)
+library(forecast)
+mod_arima <- Arima(time_series,
+              c(3,0,0), # p, d, q 
+              c(1,1,1), # P, D, Q D=1. because we have performed a seasonal difference
+              include.constant =TRUE, #intercept
+              lambda=0 #because log transformation
+              )
+mod_arima #with drift because constant and one seasonal difference
+```
+```{r}
+previsione <- forecast(mod_arima, h=242)
+plot(previsione)
+```
+```{r}
+previsione <- forecast(mod_arima, h = 242)
+plot(previsione$mean, type = "l", ylab = "Valori previsti", xlab = "Tempo", main = "Previsione senza intervalli di confidenza")
+```
+
+## Stimatori mod 3 Arima
+
+```{r}
+rmse3 <- sqrt(mean(mod_arima$residuals^2))
+rmse3
+
+mae3 <- mean(abs(mod_arima$residuals))
+mae3
+
+actual3 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+mape3 <- mean(abs((mod_arima$residuals / actual3) * 100), na.rm = TRUE)
+mape3
+
+shapiro_test3 <- shapiro.test(mod_arima$residuals)
+shapiro_test3
+
+acf_res3 <- acf(mod_arima$residuals)
+pacf_res3 <- pacf(mod_arima$residuals)
+```
+
+## Modello Arima 3 con sinusoidi come regressori
+
+```{r}
+# Parametri per la stagionalità
+s <- 365.25
+harm <- c(1,2,3) # passo da 3 a 2 sinusoidi, altrimenti mi produce dei nans
+freq <- outer(1:length(time_series_new), harm) * 2 * pi / s
+co <- cos(freq)
+si <- sin(freq)
+colnames(co) <- paste0("cos", harm)
+colnames(si) <- paste0("sin", harm)
+X <- cbind(trend=1:length(time_series_new),co, si)
+
+# Divisione in set di addestramento e test
+train_size <- floor(length(time_series_new[1:500]))
+train_y <- time_series_new[1:train_size]
+train_X <- X[1:train_size, ]
+test_y <- time_series_new[(train_size + 1):length(time_series_new)]
+test_X <- X[(train_size + 1):length(time_series_new), ]
+
+# Modello ARIMAX
+mod_sin <- Arima(train_y,
+              order = c(3, 0, 0),
+              seasonal = list(order = c(1, 1, 1), period = 7),
+              xreg = train_X,
+              lambda = 0
+)
+
+# Riassunto del modello
+summary(mod_sin)
+
+```
+
+```{r}
+# Esegui il forecast
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+
+## Losses Arima 3 mod_sin
+```{r}
+losses_mod_sin <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin(test_y, forecast_result$mean)
+
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses3_mod_sin<- data.frame(Arima3 = losses_mod_sin(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses3_mod_sin)
+
+```
+
+
+## Modello Arima 3 con variabili dummy
+
+```{r}
+plot(mod_sin$residuals)
+# Ottenere gli indici dei residui con valore maggiore o uguale a 0.05 o minore o uguale a -0.05
+indices_high_residues <- which(mod_sin$residuals >= 0.05 | mod_sin$residuals <= -0.05)
+indices_high_residues
+```
+
+dove sono le dummy:
+
+192 (immacolata), 208 (natale), 321 (pasqua), 322 (lunedì dell'angelo), 439 (vicino a ferragosto), 518 (halloween), 573 (natale), 574 (santo stefano), 579 (Capodanno)
+
+```{r}
+# Creazione di variabili dummy per i giorni specifici 
+special_days <-indices_high_residues
+
+# Creazione di variabili dummy
+dummy_vars_train <- matrix(0, nrow = train_size, ncol = length(special_days))
+dummy_vars_test <- matrix(0, nrow = length(test_y), ncol = length(special_days))
+
+for (i in seq_along(special_days)) {
+  day_index <- which(train_X[, "trend"] == special_days[i])
+  dummy_vars_train[day_index, i] <- 1
+  
+  day_index_test <- which(test_X[, "trend"] == special_days[i])
+  dummy_vars_test[day_index_test, i] <- 1
+}
+
+# Aggiunta delle variabili dummy al set di addestramento
+train_X <- cbind(train_X, dummy_vars_train)
+
+# Aggiunta delle variabili dummy al set di test
+test_X <- cbind(test_X, dummy_vars_test)
+
+mod_sin_dummy <- Arima(train_y,
+                       order = c(3, 0, 0),
+                       seasonal = list(order = c(1, 1, 1), period = 7),
+                       xreg = train_X,
+                       lambda = 0  # Puoi sperimentare con altri metodi
+)
+
+# Esegui il forecast
+forecast_result <- forecast(mod_sin_dummy , h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin_dummy, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+
+```{r}
+plot(mod_sin_dummy$residuals) 
+```
+
+
+## Losses Arima mod 3 dummy
+
+```{r}
+losses_mod_sin_dummy <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin_dummy(test_y, forecast_result$mean)
+
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses3_mod_sin_dummy <- data.frame(Arima3 = losses_mod_sin_dummy(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses3_mod_sin_dummy)
+
+```
+
+
+## Modello Arima di ordine 4
+
+```{r}
+# let's try an AR(4)
+library(forecast)
+mod_arima <- Arima(time_series,
+              c(4,0,0), # p, d, q 
+              c(1,1,1), # P, D, Q D=1. because we have performed a seasonal difference
+              include.constant =TRUE, #intercept
+              lambda=0 #because log transformation
+              )
+mod_arima #with drift because constant and one seasonal difference
+```
+
+```{r}
+previsione <- forecast(mod_arima, h=242)
+plot(previsione)
+```
+```{r}
+previsione <- forecast(mod_arima, h = 242)
+plot(previsione$mean, type = "l", ylab = "Valori previsti", xlab = "Tempo", main = "Previsione senza intervalli di confidenza")
+```
+
+## Stimatori mod 4 Arima
+
+```{r}
+rmse4 <- sqrt(mean(mod_arima$residuals^2))
+rmse4
+
+mae4 <- mean(abs(mod_arima$residuals))
+mae4
+
+actual4 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+mape4 <- mean(abs((mod_arima$residuals / actual4) * 100), na.rm = TRUE)
+mape4
+
+shapiro_test4 <- shapiro.test(mod_arima$residuals)
+shapiro_test4
+
+acf_res4 <- acf(mod_arima$residuals)
+pacf_res4 <- pacf(mod_arima$residuals)
+```
+
+
+## Modello Arima 4 con sinusoidi come regressori
+
+```{r}
+# Parametri per la stagionalità
+s <- 365.25
+harm <- c(1,2,3) # passo da 2 sinusoidi a 1 perché altrimenti vengono prodotti valori mancanti
+freq <- outer(1:length(time_series_new), harm) * 2 * pi / s
+co <- cos(freq)
+si <- sin(freq)
+colnames(co) <- paste0("cos", harm)
+colnames(si) <- paste0("sin", harm)
+X <- cbind(trend=1:length(time_series_new),co, si)
+
+# Divisione in set di addestramento e test
+train_size <- floor(length(time_series_new[1:500]))
+train_y <- time_series_new[1:train_size]
+train_X <- X[1:train_size, ]
+test_y <- time_series_new[(train_size + 1):length(time_series_new)]
+test_X <- X[(train_size + 1):length(time_series_new), ]
+
+# Modello ARIMAX
+mod_sin <- Arima(train_y,
+              order = c(4, 0, 0),
+              seasonal = list(order = c(1, 1, 1), period = 7),
+              xreg = train_X,
+              lambda = 0
+)
+
+# Riassunto del modello
+summary(mod_sin)
+
+
+```
+
+```{r}
+# Esegui il forecast
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+
+
+## Losses Arima 4 mod_sin
+
+```{r}
+losses_mod_sin <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin(test_y, forecast_result$mean)
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses4_mod_sin <- data.frame(Arima4 = losses_mod_sin(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses4_mod_sin)
+
+```
+
+## Modello Arima 4 con variabili dummy
+
+```{r}
+plot(mod_sin$residuals)
+# Ottenere gli indici dei residui con valore maggiore o uguale a 0.05 o minore o uguale a -0.05
+indices_high_residues <- which(mod_sin$residuals >= 0.05 | mod_sin$residuals <= -0.05)
+indices_high_residues
+```
+
+
+dove sono le dummy:
+
+192 (immacolata), 208 (natale), 321 (pasqua), 322 (lunedì dell'angelo), 439 (vicino a ferragosto), 518 (halloween), 573 (natale), 574 (santo stefano), 579 (Capodanno)
+
+
+```{r}
+# Creazione di variabili dummy per i giorni specifici 
+special_days <-indices_high_residues
+
+# Creazione di variabili dummy
+dummy_vars_train <- matrix(0, nrow = train_size, ncol = length(special_days))
+dummy_vars_test <- matrix(0, nrow = length(test_y), ncol = length(special_days))
+
+for (i in seq_along(special_days)) {
+  day_index <- which(train_X[, "trend"] == special_days[i])
+  dummy_vars_train[day_index, i] <- 1
+  
+  day_index_test <- which(test_X[, "trend"] == special_days[i])
+  dummy_vars_test[day_index_test, i] <- 1
+}
+
+# Aggiunta delle variabili dummy al set di addestramento
+train_X <- cbind(train_X, dummy_vars_train)
+
+# Aggiunta delle variabili dummy al set di test
+test_X <- cbind(test_X, dummy_vars_test)
+
+mod_sin_dummy <- Arima(train_y,
+                       order = c(4, 0, 0),
+                       seasonal = list(order = c(1, 1, 1), period = 7),
+                       xreg = train_X,
+                       lambda = 0  # Puoi sperimentare con altri metodi
+)
+
+# Esegui il forecast
+forecast_result <- forecast(mod_sin_dummy , h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin_dummy, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+
+```{r}
+plot(mod_sin_dummy$residuals) 
+```
+
+## Losses Arima mod 4 dummy
+
+```{r}
+losses_mod_sin_dummy <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin_dummy(test_y, forecast_result$mean)
+
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses4_mod_sin_dummy <- data.frame(Arima4 = losses_mod_sin_dummy(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses4_mod_sin_dummy)
+
+```
+
+
+## Modello Arima di ordine 5
+
+```{r}
+# let's try an AR(5)
+library(forecast)
+mod_arima <- Arima(time_series,
+              c(5,0,0), # p, d, q 
+              c(1,1,1), # P, D, Q D=1. because we have performed a seasonal difference
+              include.constant =TRUE, #intercept
+              lambda=0 #because log transformation
+              )
+mod_arima #with drift because constant and one seasonal difference
+```
+
+
+```{r}
+previsione <- forecast(mod_arima, h=242)
+plot(previsione)
+```
+
+
+```{r}
+previsione <- forecast(mod_arima, h = 242)
+plot(previsione$mean, type = "l", ylab = "Valori previsti", xlab = "Tempo", main = "Previsione senza intervalli di confidenza")
+```
+
+## Stimatori mod 5 Arima
+
+```{r}
+rmse5 <- sqrt(mean(mod_arima$residuals^2))
+rmse5
+
+mae5 <- mean(abs(mod_arima$residuals))
+mae5
+
+actual5 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+mape5 <- mean(abs((mod_arima$residuals / actual5) * 100), na.rm = TRUE)
+mape5
+
+shapiro_test5 <- shapiro.test(mod_arima$residuals)
+shapiro_test5
+
+acf_res5 <- acf(mod_arima$residuals)
+pacf_res5 <- pacf(mod_arima$residuals)
+```
+
+## Modello Arima 5 con sinusoidi come regressori
+
+```{r}
+# Parametri per la stagionalità
+s <- 365.25
+harm <- c(1) # passo da 2 sinusoidi a 1 perché altrimenti vengono prodotti valori mancanti
+freq <- outer(1:length(time_series_new), harm) * 2 * pi / s
+co <- cos(freq)
+si <- sin(freq)
+colnames(co) <- paste0("cos", harm)
+colnames(si) <- paste0("sin", harm)
+X <- cbind(trend=1:length(time_series_new),co, si)
+
+# Divisione in set di addestramento e test
+train_size <- floor(length(time_series_new[1:610]))
+train_y <- time_series_new[1:train_size]
+train_X <- X[1:train_size, ]
+test_y <- time_series_new[(train_size + 1):length(time_series_new)]
+test_X <- X[(train_size + 1):length(time_series_new), ]
+
+# Modello ARIMAX
+mod_sin <- Arima(train_y,
+              order = c(5, 0, 0),
+              seasonal = list(order = c(1, 1, 1), period = 7),
+              xreg = train_X,
+              lambda = 0
+)
+
+# Riassunto del modello
+summary(mod_sin)
+
+
+```
+
+```{r}
+# Esegui il forecast
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+## Losses Arima 5 mod_sin
+
+```{r}
+losses_mod_sin <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin(test_y, forecast_result$mean)
+
+```
+
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses5_mod_sin <- data.frame(Arima5 = losses_mod_sin(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses5_mod_sin)
+```
+
+## Modello Arima 5 con variabili dummy come regressori
+
+
+```{r}
+plot(mod_sin$residuals)
+# Ottenere gli indici dei residui con valore maggiore o uguale a 0.05 o minore o uguale a -0.05
+indices_high_residues <- which(mod_sin$residuals >= 0.05 | mod_sin$residuals <= -0.05)
+indices_high_residues
+```
+
+dove sono le dummy:
+
+192 (immacolata), 208 (natale), 321 (pasqua), 322 (lunedì dell'angelo), 439 (vicino a ferragosto), 518 (halloween), 573 (natale), 574 (santo stefano), 579 (Capodanno)
+
+```{r}
+# Creazione di variabili dummy per i giorni specifici 
+special_days <-indices_high_residues
+
+# Creazione di variabili dummy
+dummy_vars_train <- matrix(0, nrow = train_size, ncol = length(special_days))
+dummy_vars_test <- matrix(0, nrow = length(test_y), ncol = length(special_days))
+
+for (i in seq_along(special_days)) {
+  day_index <- which(train_X[, "trend"] == special_days[i])
+  dummy_vars_train[day_index, i] <- 1
+  
+  day_index_test <- which(test_X[, "trend"] == special_days[i])
+  dummy_vars_test[day_index_test, i] <- 1
+}
+
+# Aggiunta delle variabili dummy al set di addestramento
+train_X <- cbind(train_X, dummy_vars_train)
+
+# Aggiunta delle variabili dummy al set di test
+test_X <- cbind(test_X, dummy_vars_test)
+
+mod_sin_dummy <- Arima(train_y,
+                       order = c(5, 0, 0),
+                       seasonal = list(order = c(1, 1, 1), period = 7),
+                       xreg = train_X,
+                       lambda = 0  # Puoi sperimentare con altri metodi
+)
+
+# Esegui il forecast
+forecast_result <- forecast(mod_sin_dummy , h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin_dummy, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+```{r}
+plot(mod_sin_dummy$residuals) 
+```
+
+
+## Losses Arima mod 5 dummy
+
+```{r}
+losses_mod_sin_dummy <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin_dummy(test_y, forecast_result$mean)
+
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses5_mod_sin_dummy <- data.frame(Arima5 = losses_mod_sin_dummy(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses5_mod_sin_dummy)
+```
+
+
+## Modello Arima ordine 6
+
+
+```{r}
+# let's try an AR(2)
+library(forecast)
+mod_arima <- Arima(time_series,
+              c(6,0,0), # p, d, q 
+              c(1,1,1), # P, D, Q D=1. because we have performed a seasonal difference
+              include.constant =TRUE, #intercept
+              lambda=0 #because log transformation
+              )
+mod_arima #with drift because constant and one seasonal difference
+```
+```{r}
+previsione <- forecast(mod_arima, h=242)
+plot(previsione)
+```
+```{r}
+previsione <- forecast(mod_arima, h = 242)
+plot(previsione$mean, type = "l", ylab = "Valori previsti", xlab = "Tempo", main = "Previsione senza intervalli di confidenza")
+```
+
+## Stimatori mod 6 Arima
+```{r}
+rmse6 <- sqrt(mean(mod_arima$residuals^2))
+rmse6
+
+mae6 <- mean(abs(mod_arima$residuals))
+mae6
+
+actual6 <- window(time_series, start = end(time_series) - length(mod_arima$residuals) + 1)
+
+mape6 <- mean(abs((mod_arima$residuals / actual6) * 100), na.rm = TRUE)
+mape6
+
+shapiro_test6 <- shapiro.test(mod_arima$residuals)
+shapiro_test6
+
+acf_res6 <- acf(mod_arima$residuals)
+pacf_res6 <- pacf(mod_arima$residuals)
+```
+
+## Modello Arima 6 con sinusoidi come regressori
+
+```{r}
+# Parametri per la stagionalità
+s <- 365.25
+harm <- c(1,2)
+freq <- outer(1:length(time_series_new), harm) * 2 * pi / s
+co <- cos(freq)
+si <- sin(freq)
+colnames(co) <- paste0("cos", harm)
+colnames(si) <- paste0("sin", harm)
+X <- cbind(trend=1:length(time_series_new),co, si)
+
+# Divisione in set di addestramento e test
+train_size <- floor(length(time_series_new[1:610]))
+train_y <- time_series_new[1:train_size]
+train_X <- X[1:train_size, ]
+test_y <- time_series_new[(train_size + 1):length(time_series_new)]
+test_X <- X[(train_size + 1):length(time_series_new), ]
+
+# Modello ARIMAX
+mod_sin <- Arima(train_y,
+              order = c(6, 0, 0),
+              seasonal = list(order = c(1, 1, 1), period = 7),
+              xreg = train_X,
+              lambda = 0
+)
+
+# Riassunto del modello
+summary(mod_sin)
+
+
+```
+
+
+
+```{r}
+# Esegui il forecast
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+## Losses Arima 6 mod_sin
+
+```{r}
+losses_mod_sin <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin(test_y, forecast_result$mean)
+
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses6_mod_sin <- data.frame(Arima6 = losses_mod_sin(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses6_mod_sin)
+```
+
+
+## Modello Arima 6 con variabili dummy come regressori
+
+```{r}
+plot(mod_sin$residuals)
+# Ottenere gli indici dei residui con valore maggiore o uguale a 0.05 o minore o uguale a -0.05
+indices_high_residues <- which(mod_sin$residuals >= 0.05 | mod_sin$residuals <= -0.05)
+indices_high_residues
+```
+
+dove sono le dummy:
+
+192 (immacolata), 208 (natale), 321 (pasqua), 322 (lunedì dell'angelo), 439 (vicino a ferragosto), 518 (halloween), 573 (natale), 574 (santo stefano), 579 (Capodanno)
+
+## Creo le variabili dummy per i valori fuori dai bounds (sopra 0.05 e sotto -0.05)
+
+```{r}
+# Creazione di variabili dummy per i giorni specifici 
+special_days <-indices_high_residues
+
+# Creazione di variabili dummy
+dummy_vars_train <- matrix(0, nrow = train_size, ncol = length(special_days))
+dummy_vars_test <- matrix(0, nrow = length(test_y), ncol = length(special_days))
+
+for (i in seq_along(special_days)) {
+  day_index <- which(train_X[, "trend"] == special_days[i])
+  dummy_vars_train[day_index, i] <- 1
+  
+  day_index_test <- which(test_X[, "trend"] == special_days[i])
+  dummy_vars_test[day_index_test, i] <- 1
+}
+
+# Aggiunta delle variabili dummy al set di addestramento
+train_X <- cbind(train_X, dummy_vars_train)
+
+# Aggiunta delle variabili dummy al set di test
+test_X <- cbind(test_X, dummy_vars_test)
+
+mod_sin_dummy <- Arima(train_y,
+                       order = c(6, 0, 0),
+                       seasonal = list(order = c(1, 1, 1), period = 7),
+                       xreg = train_X,
+                       lambda = 0  # Puoi sperimentare con altri metodi
+)
+
+# Esegui il forecast
+forecast_result <- forecast(mod_sin_dummy , h = length(test_y), xreg = test_X)
+length(test_y)
+# Plot del risultato
+plot(forecast_result)
+```
+
+```{r}
+# Esegui il forecast con visualizzazione dei valori reali
+forecast_result <- forecast(mod_sin_dummy, h = length(test_y), xreg = test_X)
+
+# Estrai le previsioni dal risultato del forecast
+pred_values <- forecast_result$mean
+
+# Plot del risultato con previsioni e valori reali
+plot(pred_values, type = "l", col = "red", lty = 1, lwd = 2, ylim = range(c(pred_values, test_y)))
+lines(length(train_y) + 1:length(test_y), test_y, col = "blue", type = "l", lty = 2, lwd = 2)
+legend("topright", legend = c("Forecast", "Valori Reali"), col = c("red", "blue"), lty = 1:2, lwd = 2)
+
+```
+
+
+```{r}
+plot(mod_sin_dummy$residuals) 
+```
+
+## Losses Arima mod 6 dummy
+```{r}
+losses_mod_sin_dummy <- function(real, pred) {
+  error <- real - pred
+  ae <- abs(error)
+  se <- error^2
+  c(
+    ME = mean(error),
+    RMSE = sqrt(mean(se)),
+    MAE = mean(ae),
+    MPE = mean(error/real)*100,
+    MAPE = mean(ae/real)*100
+  )
+}
+
+losses_mod_sin_dummy(test_y, forecast_result$mean)
+
+```
+
+```{r}
+# Chiamata alla funzione losses e salvataggio dei risultati in un data frame
+losses6_mod_sin_dummy <- data.frame(Arima6 = losses_mod_sin_dummy(test_y, forecast_result$mean))
+
+# Visualizza il data frame
+print(losses6_mod_sin_dummy)
+
+```
+
+
+
+
+# Final results
+
+## Confronto Modelli Arima
+
+```{r}
+# Crea un dataframe con i risultati
+risultati <- data.frame(
+  Modello = c("ARIMA2", "ARIMA3", "ARIMA4", "ARIMA5", "ARIMA6"),
+  RMSE = c(rmse2, rmse3, rmse4, rmse5, rmse6),
+  MAE = c(mae2, mae3, mae4, mae5, mae6),
+  MAPE = c(mape2, mape3, mape4, mape5, mape6)
+)
+risultati
+```
+
+## Confronto Modelli Arima con regressori sinusoidali
+```{r}
+results1 <- data.frame( losses2_mod_sin, losses3_mod_sin, losses4_mod_sin, losses5_mod_sin, losses6_mod_sin)
+
+# Visualizziamo la tabella
+print(results1)
+```
+## Confronto Modelli Arima con regressori sinusoidali e dummy variables
+```{r}
+results2 <- data.frame( losses2_mod_sin_dummy, losses3_mod_sin_dummy, losses4_mod_sin_dummy, losses5_mod_sin_dummy, losses6_mod_sin_dummy)
+
+# Visualizziamo la tabella
+print(results2)
+```
+
+
+

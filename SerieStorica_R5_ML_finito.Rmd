@@ -1,0 +1,625 @@
+---
+title: "Modelli di Machine Learning per il ristorante 5"
+date: "2023-11-08"
+output: html_document
+---
+
+```{r}
+
+#Caricamento delle librerie
+library(xts)
+library(forecast)
+library(lubridate)
+library(tsfknn)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(recipes)
+library(tensorflow)
+library(reticulate)
+if (!require(keras)) install.packages("keras")
+library(keras)
+#use_condaenv("r-tensorflow", required = TRUE)
+```
+
+```{r}
+#if (!require(remotes)) install.packages("remotes")
+#remotes::install_github("rstudio/tensorflow", force = TRUE)
+```
+
+```{r}
+#py_install("tensorflow")
+```
+
+\
+Leggo il csv del ristorante R5:\
+
+```{r}
+# Carica i dati dal file CSV
+dt <- read.csv("R5.csv")
+
+# Converti la colonna "Date" nel formato "YYYY-MM-DD"
+dt$Date <- as.Date(dt$data, format = "%Y-%m-%d")
+
+# Crea la serie storica con le date nel formato "YYYY-MM-DD" e i valori da LT_R5
+dtts <- xts(
+  dt$LT_R5, # Selezioniamo la colonna LT_R5 come dati sull'asse delle y
+  dt$Date # Utilizziamo la colonna "Date" formattata come oggetti di data sull'asse delle x
+)
+
+
+
+# Plotta la serie storica
+plot(dtts)
+
+```
+
+\
+Ora iniziamo a dividere la serie storica in anni per poi fare i calcoli necessari al preprocessing:\
+
+```{r}
+# Filtra la serie storica per il 2018
+dtts_2018 <- dtts["2018-01-01/2018-12-31"]
+
+# Filtra la serie storica per il 2019
+dtts_2019 <- dtts["2019-01-01/2019-12-31"]
+
+# Filtra la serie storica per il 2021
+dtts_2021 <- dtts["2021-01-01/2021-12-31"]
+
+# Filtra la serie storica per il 2022
+dtts_2022 <- dtts["2022-01-01/2022-12-31"]
+
+# Filtra la serie storica per il 2022
+dtts_2023 <- dtts["2023-01-01/2023-12-31"]
+
+# Calcola la media mensile per il 2018
+monthly_mean_2018 <- apply.monthly(dtts_2018, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2019 <- apply.monthly(dtts_2019, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2021 <- apply.monthly(dtts_2021, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2022 <- apply.monthly(dtts_2022, FUN = mean)
+
+# Calcola la media mensile per il 2019
+monthly_mean_2023 <- apply.monthly(dtts_2023, FUN = mean)
+
+# Estrai i mesi dai dati
+months_2018 <- as.numeric(format(index(monthly_mean_2018), "%m"))
+months_2019 <- as.numeric(format(index(monthly_mean_2019), "%m"))
+
+# Trova gli indici dei mesi comuni tra il 2018 e il 2019
+common_month_indices <- which(months_2018 %in% months_2019)
+
+# Crea un vettore con il mese di riferimento e la media corrispondente per i mesi comuni
+result_vector <- data.frame(
+  "Mese" = months_2018[common_month_indices],
+  "Media_2018" = as.vector(monthly_mean_2018[common_month_indices]),
+  "Media_2019" = as.vector(monthly_mean_2019[common_month_indices])
+)
+
+# Calcola la differenza percentuale tra le medie del 2018 e del 2019 per lo stesso mese
+result_vector$Differenza_Percentuale <- 
+  ((result_vector$Media_2018 - result_vector$Media_2019) / result_vector$Media_2018)
+
+# Calcola il valore massimo (in valore assoluto) delle differenze percentuali
+max_diff_percent <- max(abs(result_vector$Differenza_Percentuale))
+
+# Aggiungi colonne Tolleranza_Min e Tolleranza_Max
+result_vector$Tolleranza <- max_diff_percent
+
+print(result_vector)
+
+```
+
+```{r}
+#stabilisco la tolleranza sulla base di quello che ho scritto sopra
+tolleranza <- result_vector$Media_2019 * result_vector$Tolleranza 
+
+# Aggiungi i valori di tolleranza al dataset
+result_vector$Tolleranza_Min_2019 <- abs(result_vector$Media_2019 - tolleranza)
+result_vector$Tolleranza_Max_2019 <- result_vector$Media_2019 + tolleranza
+
+print(result_vector)
+```
+
+```{r}
+# Estrai i mesi del 2019 che non erano presenti nel 2018
+missing_months_2019 <- months_2019[!months_2019 %in% months_2018]
+
+# Crea un nuovo dataframe dei dati con i mesi mancanti e le medie del 2019
+missing_months_data <- data.frame(
+  "Mese" = missing_months_2019,
+  "Media_2018" = NA,  # Assegna NA ai mesi mancanti nel 2018
+  "Media_2019" = monthly_mean_2019[!months_2019 %in% months_2018]
+)
+
+#stabilisco la tolleranza sulla base di quello che ho scritto sopra
+tolleranza <- missing_months_data$Media_2019 * result_vector$Tolleranza
+
+# Aggiungi i valori di tolleranza al dataset
+missing_months_data$Tolleranza_Min_2019 <- abs(missing_months_data$Media_2019 - tolleranza)
+missing_months_data$Tolleranza_Max_2019 <- missing_months_data$Media_2019 + tolleranza
+
+print(missing_months_data)
+```
+
+\
+Creo il nuovo dataframe:\
+
+```{r}
+# Estrai la colonna "Media_2019" da result_vector
+result_vector_2019 <- result_vector[, c("Mese", "Media_2019", "Tolleranza_Min_2019", "Tolleranza_Max_2019")]
+
+# Estrai le colonne "Media_2018" e "Media_2019" da missing_months_data
+missing_data_2019 <- missing_months_data[, c("Mese", "Media_2019", "Tolleranza_Min_2019", "Tolleranza_Max_2019")]
+
+
+# Concatena i due dataset
+combined_data <- rbind(missing_data_2019, result_vector_2019)
+
+# Aggiungi una colonna di numeri da 1 a 12 come indici
+combined_data$Mese = 1:12
+
+
+# Rimuovi l'indice implicito
+rownames(combined_data) <- NULL
+
+# Visualizza il dataset senza l'indice implicito
+print(combined_data)
+```
+
+```{r}
+# Estrai il mese dalla data e crea un nuovo dataframe
+monthly_mean_2021_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2021), "%m")),
+  "Media_2021" = coredata(monthly_mean_2021)
+)
+monthly_mean_2022_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2022), "%m")),
+  "Media_2022" = coredata(monthly_mean_2022)
+)
+monthly_mean_2023_new <- data.frame(
+  "Mese" = as.integer(format(index(monthly_mean_2023), "%m")),
+  "Media_2023" = coredata(monthly_mean_2023)
+)
+
+# Visualizza i nuovi dataframes
+print(monthly_mean_2021_new)
+print(monthly_mean_2022_new)
+print(monthly_mean_2023_new)
+```
+
+```{r}
+# Verifica le lunghezze dei dataframe mensili
+length_2021 <- nrow(monthly_mean_2021_new)
+length_2022 <- nrow(monthly_mean_2022_new)
+
+# Trova la lunghezza minima tra i dataframe
+min_length <- min(length_2021, length_2022)
+
+# Seleziona solo le prime 'min_length' righe da entrambi i dataframe
+monthly_mean_2021_new <- monthly_mean_2021_new[1:min_length, ]
+monthly_mean_2022_new <- monthly_mean_2022_new[1:min_length, ]
+monthly_mean_2023_new <- monthly_mean_2023_new[1:5, ]
+# Creazione di un nuovo dataframe per i confronti
+confronti <- data.frame(  
+  "Mese" = rep(1:12, times = 1),  # Mesi da 1 a 12 per due anni
+  "Media_2021" = monthly_mean_2021_new$Media,
+  "Media_2022" = monthly_mean_2022_new$Media,
+  "Tolleranza_Min" = combined_data$Tolleranza_Min[1:min_length],
+  "Tolleranza_Max" = combined_data$Tolleranza_Max[1:min_length]
+)
+
+confronti1 <- data.frame(
+  "Anno" = rep(c(2023), each = 5),  # Ripeti l'anno per ogni mese
+  "Mese" = rep(1:5, times = 1),  # Mesi da 1 a 12 per due anni
+  "Media_2023" = monthly_mean_2023_new$Media,
+  "Tolleranza_Min" = combined_data$Tolleranza_Min[1:5],
+  "Tolleranza_Max" = combined_data$Tolleranza_Max[1:5]
+)
+# Aggiungi una colonna di confronto per ciascun anno
+confronti$Confronto_2021 <- confronti$Media_2021 >= confronti$Tolleranza_Min & confronti$Media_2021 <= confronti$Tolleranza_Max
+confronti$Confronto_2022 <- confronti$Media_2022 >= confronti$Tolleranza_Min & confronti$Media_2022 <= confronti$Tolleranza_Max
+
+confronti1$Confronto_2023 <- confronti1$Media_2023 >= confronti1$Tolleranza_Min & confronti1$Media_2023 <= confronti1$Tolleranza_Max
+
+# Visualizza il dataframe di confronto
+print(confronti)
+print(confronti1)
+```
+
+```{r}
+# Filtra la serie storica a partire da giugno 2021
+dtts_may_2021 <- dtts["2021-05-01/"]
+plot(dtts_may_2021)
+```
+
+## Inizio la costruzione dei modelli:
+
+```{r}
+#Carico la serie temporale
+time_series <- ts(dtts_may_2021)
+#Dataset di train e di validation 
+train <- dtts_may_2021["2021-05-01/2022-12-31"]
+val <- dtts_may_2021["2023-01-01/2023-05-03"]
+```
+
+```{r}
+#Converto in formato ts train e validation set e ne guardo le dimensioni:
+ts_train =ts(train)
+ts_val = ts(val)
+dim(ts_train)
+dim(ts_val)
+```
+
+# Modello 1 knn 
+
+```{r}
+#Costruisco il modello
+pred_ml1 <- knn_forecasting(ts_train, h = 123, lags = 1:365,  k = 50, msas = "recursive",cf= "weighted")
+
+# indici KNN 1
+prediction_ml1 <- pred_ml1$prediction
+ml_mod1_MAPE <- mean(abs(prediction_ml1 - as.numeric(ts_val))/as.numeric(ts_val))
+
+ml_mod1_ME <- mean(prediction_ml1 - as.numeric(ts_val))
+
+# Root Mean Squared Error (RMSE)
+ml_mod1_RMSE <- sqrt(mean((prediction_ml1 - as.numeric(ts_val))^2))
+
+# Mean Percentage Error (MPE)
+ml_mod1_MPE <- mean((prediction_ml1 - as.numeric(ts_val)) / as.numeric(ts_val)) * 100
+
+# Mean Absolute Error (MAE)
+ml_mod1_MAE <- mean(abs(prediction_ml1 - as.numeric(ts_val)))
+```
+
+## Indici knn 1:
+
+```{r}
+
+# Create a data frame
+knn1_table <- data.frame(
+  Model = "KNN1",
+  ME = ml_mod1_ME,
+  RMSE = ml_mod1_RMSE,
+  MAE = ml_mod1_MAE,
+  MPE = ml_mod1_MPE,
+  MAPE = ml_mod1_MAPE
+)
+
+# Print the table
+print(knn1_table)
+
+```
+
+## Previsioni test set knn 1:
+
+```{r, fig.height = 7, fig.width = 11}
+
+ytrain <- as.numeric(train)
+ggplot() +
+  autolayer(ts(val, start = length(ytrain)+1), series="Validation",size=0.4) +
+  autolayer(pred_ml1$prediction, series="Previsione", size=0.4)+
+  xlab("Time") +
+  ylab("Value")+
+  scale_color_manual(values=c("#F44611", "#003399"))+
+  theme(legend.title = element_blank())
+```
+
+# Modello 2 knn
+
+```{r}
+pred_ml2 <- knn_forecasting(ts_train, h = 123, lags = 1:365,  k = c(30,35,40,45,50,55,60,65,70), msas = "recursive",cf = "weighted")
+
+# MAPE KNN 2
+prediction_ml2 <- pred_ml2$prediction
+ml_mod2_MAPE <- mean(abs(prediction_ml2 - as.numeric(ts_val))/as.numeric(ts_val))
+
+ml_mod2_ME <- mean(prediction_ml2 - as.numeric(ts_val))
+
+# Root Mean Squared Error (RMSE)
+ml_mod2_RMSE <- sqrt(mean((prediction_ml2 - as.numeric(ts_val))^2))
+
+# Mean Percentage Error (MPE)
+ml_mod2_MPE <- mean((prediction_ml2 - as.numeric(ts_val)) / as.numeric(ts_val)) * 100
+
+# Mean Absolute Error (MAE)
+ml_mod2_MAE <- mean(abs(prediction_ml2 - as.numeric(ts_val)))
+```
+
+## Indici knn2 :
+
+```{r}
+
+# Create a data frame
+knn2_table <- data.frame(
+  Model = "KNN2",
+  ME = ml_mod2_ME,
+  RMSE = ml_mod2_RMSE,
+  MAE = ml_mod2_MAE,
+  MPE = ml_mod2_MPE,
+  MAPE = ml_mod2_MAPE
+)
+
+# Print the table
+print(knn2_table)
+
+```
+
+## Previsioni test set knn 2:
+
+```{r, fig.height = 7, fig.width = 11}
+
+ytrain <- as.numeric(train)
+ggplot() +
+  autolayer(ts(val, start = length(ytrain)+1), series="Validation",size=0.4) +
+  autolayer(pred_ml2$prediction, series="Previsione", size=0.4)+
+  xlab("Time") +
+  ylab("Value")+
+  scale_color_manual(values=c("#F44611", "#003399"))+
+  theme(legend.title = element_blank())
+```
+
+# -RNN
+
+## Modello lstm1:
+
+```{r}
+
+# Faccio il cut della serie temporale dal mese scelto sulla base della tolleranza fino ai primi giorni di maggio 2023
+dt1 <- dt[925:1657, ]
+
+# Rimozione giorni per passare il numero corretto di dati nel batch size del modello
+
+dt1 <- dt1[-c(31, 92, 123, 184, 245, 396, 457, 488, 549, 610, 731, 732, 733),]
+
+# Verifica le versioni dei pacchetti
+packageVersion("dplyr")
+packageVersion("tibble")
+
+# Dataframe di train e di test (test è solo il 2023)
+df_train <- dt1[1:600,] 
+df_val <- dt1[601:720,] 
+
+df <- bind_rows(
+    df_train %>% add_column(key = "training"),
+    df_val %>% add_column(key = "validation")) 
+
+#Operazione di Scaling e Centering
+rec_obj <- recipe(LT_R5 ~ ., df) %>%
+    step_sqrt(LT_R5) %>%
+    step_center(LT_R5) %>%
+    step_scale(LT_R5) %>%
+    prep()
+
+df_scaled <- bake(rec_obj, df)
+
+# Salva i valori per effettuare la trasformazione inversa a seguito della previsione
+center_history <- rec_obj$steps[[2]]$means["LT_R5"]
+scale_history  <- rec_obj$steps[[3]]$sds["LT_R5"]
+
+c("center" = center_history, "scale" = scale_history)
+
+```
+
+Definisco i parametri del modello:
+
+```{r}
+batch_size   <- 30    
+tsteps       <- 1
+epochs       <- 200
+
+# Training set
+train_lag <- df_scaled %>%
+    mutate(value_lag = lag(LT_R5, 30)) %>%
+    filter(!is.na(value_lag)) %>%
+    filter(key == "training") 
+
+
+x_train <- array(data = train_lag$value_lag, dim = c(length(train_lag$value_lag), tsteps, 1))
+
+y_train <- array(data = train_lag$LT_R5, dim = c(length(train_lag$LT_R5), tsteps))
+
+# Validation set
+val_lag <- df_scaled%>%
+    mutate(value_lag = lag(LT_R5, 30)) %>%
+    filter(!is.na(value_lag)) %>%
+    filter(key == "validation")
+ 
+x_val <- array(data = val_lag$value_lag, dim = c(length(val_lag$value_lag), tsteps, 1))
+
+y_val <- array(data = val_lag$LT_R5, dim = c(length(val_lag$LT_R5), tsteps))
+```
+
+\
+Definisco l'archittetura del modello:\
+
+```{r, warning=FALSE, message=FALSE,include=FALSE}
+
+mod_lstm1 <- keras_model_sequential()
+
+mod_lstm1 %>%
+    layer_lstm(units            = 100, 
+               input_shape      = c(tsteps, 1), 
+               batch_size       = batch_size,
+               dropout=0.3, recurrent_dropout=0.5,
+               return_sequences = TRUE, 
+               stateful         = TRUE) %>% 
+    layer_lstm(units            = 90, 
+               return_sequences = FALSE,
+               dropout=0.3, recurrent_dropout=0.5,
+               stateful         = TRUE) %>% 
+    layer_dense(units = 1, activation = "linear") 
+
+mod_lstm1 %>% 
+    compile(loss = 'mae', optimizer = 'adam') 
+
+mod_lstm1
+```
+
+\
+Allenamento del modello:\
+
+```{r}
+for (i in 1:epochs) {
+    mod_lstm1 %>% fit(x= x_train, 
+                  y = y_train, 
+                  batch_size = batch_size,
+                  epochs     = 1, 
+                  verbose    = 1, 
+                  shuffle    = FALSE)
+    cat("Epoch: ", i)}
+
+```
+
+\
+Predizioni del modello:\
+
+```{r}
+pred_lstm1_scaled <- mod_lstm1 %>%
+  predict(x_val, batch_size = batch_size) %>%
+  .[, 1] 
+
+# Trasformazione inversa
+pred_lstm1 <- tibble(
+    Data   = val_lag$Date,
+    value   = (pred_lstm1_scaled * scale_history + center_history)^2) 
+#Indici
+MAE_lstm1 <- mean(abs(pred_lstm1$value - val_lag$LT_R5))
+MAPE_lstm1 <- mean(abs(pred_lstm1$value - val_lag$LT_R5) / val_lag$LT_R5) * 100
+ME_lstm1 <- mean(pred_lstm1$value - val_lag$LT_R5)
+RMSE_lstm1 <- sqrt(mean((pred_lstm1$value - val_lag$LT_R5)^2))
+MPE_lstm1 <- mean((pred_lstm1$value - val_lag$LT_R5) / val_lag$LT_R5) * 100
+
+```
+
+## Indici lstm1:
+
+```{r}
+table_lstm1 <- data.frame(
+  Model = "LSTM1",
+  ME = ME_lstm1,
+  RMSE = RMSE_lstm1,
+  MAE = MAE_lstm1,
+  MPE = MPE_lstm1,
+  MAPE = MAPE_lstm1
+)
+
+# Stampare la tabella
+print(table_lstm1)
+```
+
+## Previsioni test set lstm1:
+
+```{r}
+ggplot() +
+  autolayer(ts(df_val$LT_R5), series="Validation",size=0.4) +
+  autolayer(ts(pred_lstm1$value),
+                  series="Previsione", size=0.4)+
+  xlab("Time") +
+  ylab("Value")+
+  scale_color_manual(values=c("#F44611", "#003399"))+
+  theme(legend.title = element_blank())
+```
+
+# Modello gru1
+
+Architettura del modello:\
+
+```{r}
+
+mod_gru1 <- keras_model_sequential()
+
+mod_gru1 %>%
+    layer_gru(units  = 90, 
+               input_shape = c(tsteps, 1), 
+               batch_size  = batch_size,
+               dropout=0.3, recurrent_dropout=0.5) %>% 
+    layer_dense(units = 1, activation = "linear") 
+
+```
+
+\
+Compilo il modello:\
+
+```{r}
+mod_gru1 %>% 
+    compile(loss = 'mae', optimizer = 'adam')
+
+```
+
+\
+Allenamento del modello:\
+
+```{r}
+for (i in 1:epochs) {
+    mod_gru1 %>% fit(x  = x_train, 
+                      y    = y_train, 
+                      batch_size = batch_size,
+                      epochs     = 1, 
+                      verbose    = 1, 
+                      shuffle    = FALSE)
+
+    cat("Epoch: ", i)
+}
+
+```
+
+\
+Predizioni del modello:\
+
+```{r}
+pred_gru1_scaled <- mod_gru1 %>% 
+    predict(x_val, batch_size = batch_size) %>%
+    .[,1] 
+
+pred_gru1 <- tibble(
+    Data   = val_lag$Date,
+    value   = (pred_gru1_scaled * scale_history + center_history)^2) 
+#Indici
+MAE_gru1 <- mean(abs(pred_gru1$value - val_lag$LT_R5))
+MAPE_gru1 <- mean(abs(pred_gru1$value - val_lag$LT_R5) / val_lag$LT_R5) * 100
+ME_gru1 <- mean(pred_gru1$value - val_lag$LT_R5)
+RMSE_gru1 <- sqrt(mean((pred_gru1$value - val_lag$LT_R5)^2))
+MPE_gru1 <- mean((pred_gru1$value - val_lag$LT_R5) / val_lag$LT_R5) * 100
+
+
+```
+
+## Indici gru1:
+
+```{r}
+table_gru1 <- data.frame(
+  Model = "GRU1",
+  ME = ME_gru1,
+  RMSE = RMSE_gru1,
+  MAE = MAE_gru1,
+  MPE = MPE_gru1,
+  MAPE = MAPE_gru1
+)
+
+# Stampare la tabella
+print(table_gru1)
+```
+
+## Previsioni test set gru1: 
+
+```{r}
+ggplot() +
+  autolayer(ts(df_val$LT_R5), series="Validation",size=0.4) +
+  autolayer(ts(pred_gru1$value),
+                  series="Previsione", size=0.4)+
+  xlab("Time") +
+  ylab("Value")+
+  scale_color_manual(values=c("#F44611", "#003399"))+
+  theme(legend.title = element_blank())
+
+```
+
+\

@@ -1,0 +1,213 @@
+---
+title: "Ristorante 1-Serie Storica"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-10-30"
+---
+```{r}
+library(xts)
+library(forecast)
+library(lubridate)
+library(tsfknn)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(recipes)
+```
+
+
+```{r}
+#if (!require(remotes)) install.packages("remotes")
+#remotes::install_github("rstudio/tensorflow", force = TRUE)
+```
+\
+```{r}
+library(tensorflow)
+library(reticulate)
+if (!require(keras)) install.packages("keras")
+library(keras)
+#use_condaenv("r-tensorflow", required = TRUE)
+```
+\
+
+\
+```{r}
+#py_install("tensorflow")
+```
+
+\
+
+\
+```{r}
+# Carica i dati dal file CSV
+dt <- read.csv("R1.csv")
+
+# Converti la colonna "Date" nel formato "YYYY-MM-DD"
+dt$Date <- as.Date(dt$data, format = "%Y-%m-%d")
+
+# Crea la serie storica con le date nel formato "YYYY-MM-DD" e i valori da LT_R1
+dtts <- xts(
+  dt$LT_R1, # Selezioniamo la colonna LT_R1 come dati sull'asse delle y
+  dt$Date # Utilizziamo la colonna "Date" formattata come oggetti di data sull'asse delle x
+)
+
+
+# Plotta la serie storica
+plot(dtts)
+
+```
+
+```{r}
+x <- log(dtts)
+plot(x)
+Acf(x, )
+Pacf(x)
+```
+
+
+```{r}
+# Filtra la serie storica a partire da gennaio 2022
+dtts_june_2021 <- dtts["2022-01-01/"]
+plot(dtts_june_2021, main='Time Series')
+```
+
+
+# inizio costruzioni modello
+\
+```{r}
+# Carica i pacchetti
+
+# Genera un dataset di serie temporali di esempio
+time_series <- ts(dtts_june_2021)
+
+train <- dtts_june_2021["2022-01-01/2023-03-31"]
+val <- dtts_june_2021["2023-04-01/2023-04-30"]
+```
+\
+
+\
+```{r}
+ts_train =ts(train)
+ts_val = ts(val)
+dim(ts_train)
+dim(ts_val)
+```
+\
+# modello 1 knn
+
+
+```{r}
+pred_ml1 <- knn_forecasting(ts_train, h = 30, lags = 1:365,  k = 50, msas = "recursive",cf= "weighted")
+
+# indici KNN 1
+prediction_ml1 <- pred_ml1$prediction
+length(prediction_ml1)
+```
+
+```{r}
+ml_mod1_MAPE <- mean(abs(prediction_ml1 - as.numeric(ts_val))/as.numeric(ts_val))
+
+ml_mod1_ME <- mean(prediction_ml1 - as.numeric(ts_val))
+
+# Root Mean Squared Error (RMSE)
+ml_mod1_RMSE <- sqrt(mean((prediction_ml1 - as.numeric(ts_val))^2))
+
+# Mean Percentage Error (MPE)
+ml_mod1_MPE <- mean((prediction_ml1 - as.numeric(ts_val)) / as.numeric(ts_val)) * 100
+
+# Mean Absolute Error (MAE)
+ml_mod1_MAE <- mean(abs(prediction_ml1 - as.numeric(ts_val)))
+
+```
+\
+##indici knn1
+\
+```{r}
+
+# Create a data frame
+knn1_table <- data.frame(
+  Model = "KNN1",
+  ME = ml_mod1_ME,
+  RMSE = ml_mod1_RMSE,
+  MAE = ml_mod1_MAE,
+  MPE = ml_mod1_MPE,
+  MAPE = ml_mod1_MAPE
+)
+
+# Print the table
+print(knn1_table)
+
+```
+\
+
+## previsioni test set knn1
+\
+```{r, fig.height = 7, fig.width = 11}
+
+ytrain <- as.numeric(train)
+ggplot() +
+  autolayer(ts(val, start = length(ytrain)+1), series="Actual",size=0.4) +
+  autolayer(pred_ml1$prediction, series="Predicted", size=0.4)+
+  xlab("Days") +
+  ylab("Daily Revenue")+
+  scale_color_manual(values=c("#F44611", "#003399"))+
+  theme(legend.title = element_blank())
+```
+\
+
+
+# modello 2 knn
+
+```{r}
+pred_ml2 <- knn_forecasting(ts_train, h = 30, lags = 1:365,  k = c(30,35,40,45,50,55,60,65,70), msas = "recursive",cf = "weighted")
+
+# MAPE KNN 2
+prediction_ml2 <- pred_ml2$prediction
+ml_mod2_MAPE <- mean(abs(prediction_ml2 - as.numeric(ts_val))/as.numeric(ts_val))
+
+ml_mod2_ME <- mean(prediction_ml2 - as.numeric(ts_val))
+
+# Root Mean Squared Error (RMSE)
+ml_mod2_RMSE <- sqrt(mean((prediction_ml2 - as.numeric(ts_val))^2))
+
+# Mean Percentage Error (MPE)
+ml_mod2_MPE <- mean((prediction_ml2 - as.numeric(ts_val)) / as.numeric(ts_val)) * 100
+
+# Mean Absolute Error (MAE)
+ml_mod2_MAE <- mean(abs(prediction_ml2 - as.numeric(ts_val)))
+```
+\
+## indici knn2
+\
+```{r}
+
+# Create a data frame
+knn2_table <- data.frame(
+  Model = "KNN2",
+  ME = ml_mod2_ME,
+  RMSE = ml_mod2_RMSE,
+  MAE = ml_mod2_MAE,
+  MPE = ml_mod2_MPE,
+  MAPE = ml_mod2_MAPE
+)
+
+# Print the table
+print(knn2_table)
+
+```
+
+
+## previsioni test set knn2
+```{r, fig.height = 7, fig.width = 11}
+
+ytrain <- as.numeric(train)
+ggplot() +
+  autolayer(ts(val, start = length(ytrain)+1), series="Actual",size=0.4) +
+  autolayer(pred_ml2$prediction, series="Predicted", size=0.4)+
+  xlab("Days") +
+  ylab("Daily Revenu")+
+  scale_color_manual(values=c("#F44611", "#003399"))+
+  theme(legend.title = element_blank())
+```
+
